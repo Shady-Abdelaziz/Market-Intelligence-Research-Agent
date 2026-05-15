@@ -143,19 +143,9 @@ async def monitor_tick(ctx: dict[str, Any], target_id: str) -> None:
         return
 
     async with get_session() as session:
-        target = await MonitorRepo(session).get_by_ticker_id_or_ticker(target_id) if False else None
-        # The repo doesn't expose get_by_id, so re-fetch via SQL
-        from sqlalchemy import select
-
-        from app.persistence.models import MonitoringTarget
-
-        result = await session.execute(
-            select(MonitoringTarget).where(MonitoringTarget.id == target_id)
-        )
-        target = result.scalar_one_or_none()
+        target = await MonitorRepo(session).get_by_id(target_id)
         if not target or not target.active:
             return
-
         ticker = target.ticker
 
     # Recompute baselines

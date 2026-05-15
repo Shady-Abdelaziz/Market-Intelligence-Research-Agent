@@ -124,6 +124,9 @@ class MonitorRepo:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id(self, target_id: uuid.UUID | str) -> MonitoringTarget | None:
+        return await self.session.get(MonitoringTarget, str(target_id))
+
     async def list_active(self) -> list[MonitoringTarget]:
         result = await self.session.execute(
             select(MonitoringTarget).where(MonitoringTarget.active.is_(True))

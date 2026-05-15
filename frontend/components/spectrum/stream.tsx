@@ -73,6 +73,20 @@ export type StreamState = {
   findings: Finding[];
   citations: Citation[];
   done: boolean;
+  // identity / hero (set from real backend events; placeholders for demo mode)
+  ticker: string;
+  companyName: string;
+  sector: string;
+  marketCap: string;
+  exchange: string;
+  query: string;
+  caseId: string;
+  filedAt: string;
+  failed: boolean;
+  failedReason: string | null;
+  // proactive monitoring metadata (set on monitor-fired analyses)
+  alertTag: string | null;
+  monitorTrigger: string | null;
 };
 
 export const TIMELINE_INITIAL: StreamState = {
@@ -89,6 +103,18 @@ export const TIMELINE_INITIAL: StreamState = {
   findings: [],
   citations: [],
   done: false,
+  ticker: "",
+  companyName: "",
+  sector: "",
+  marketCap: "",
+  exchange: "",
+  query: "",
+  caseId: "",
+  filedAt: "",
+  failed: false,
+  failedReason: null,
+  alertTag: null,
+  monitorTrigger: null,
 };
 
 const NARRATIVE_TEXT =
@@ -117,6 +143,22 @@ type TimelineStep = { at: number; apply: (s: StreamState) => StreamState };
 
 function makeTimeline(): TimelineStep[] {
   const T: TimelineStep[] = [];
+
+  // t=0 — seed the demo identity so the scripted preview matches the design
+  T.push({
+    at: 0,
+    apply: (s) => ({
+      ...s,
+      ticker: "KO",
+      companyName: "Coca-Cola Company.",
+      sector: "Beverages — Non-Alcoholic",
+      marketCap: "Market cap $268.4B",
+      exchange: "NYSE",
+      query: "Should I be worried about Coca-Cola's beverage volume trends going into summer?",
+      caseId: "j-92a7f3",
+      filedAt: "Filed at 14:08 GMT",
+    }),
+  });
 
   T.push({
     at: 200,
@@ -568,6 +610,515 @@ export function useAgentStream(timeline = TIMELINE): {
   return {
     state,
     controls: { replay, togglePlay, playing, elapsed, done: step >= timeline.length },
+  };
+}
+
+// ============================================================================
+//  REAL AGENT STREAM — subscribes to /status/{jobId}/stream and translates
+//  real backend SSE events into the same StreamState shape the scripted demo
+//  uses. The visual components don't care which hook produced the state.
+// ============================================================================
+
+type ColorName = "coral" | "amber" | "azure" | "mint" | "violet" | "rose";
+const FINDING_COLORS: ColorName[] = ["coral", "amber", "azure"];
+const CITATION_COLORS: ColorName[] = ["azure", "mint", "coral", "violet", "amber", "rose"];
+
+function fmtMoney(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  if (Math.abs(n) >= 1_000_000_000_000) return `$${(n / 1e12).toFixed(2)}T`;
+  if (Math.abs(n) >= 1_000_000_000) return `$${(n / 1e9).toFixed(2)}B`;
+  if (Math.abs(n) >= 1_000_000) return `$${(n / 1e6).toFixed(2)}M`;
+  return `$${n.toFixed(2)}`;
+}
+
+function fmtPct(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  const s = n >= 0 ? "+" : "−";
+  return `${s}${Math.abs(n).toFixed(2)}%`;
+}
+
+function fmtQuarterRev(q: { quarter?: string; revenue_usd?: number } | undefined): {
+  q: string;
+  rev: string;
+} {
+  if (!q) return { q: "—", rev: "—" };
+  return { q: q.quarter ?? "—", rev: fmtMoney(q.revenue_usd ?? 0) };
+}
+
+function quarterDelta(
+  q?: { revenue_usd?: number },
+  prev?: { revenue_usd?: number },
+): string | undefined {
+  if (!q?.revenue_usd || !prev?.revenue_usd) return undefined;
+  const d = ((q.revenue_usd - prev.revenue_usd) / prev.revenue_usd) * 100;
+  return fmtPct(d);
+}
+
+function buildMarketFromTool(data: Record<string, unknown>): MarketData {
+  const last2 = (data.last_two_quarterly_revenues as Array<{
+    quarter?: string;
+    revenue_usd?: number;
+  }>) ?? [];
+  const q1 = fmtQuarterRev(last2[0]);
+  const q4 = fmtQuarterRev(last2[1]);
+  return {
+    price: fmtMoney(data.price as number | null),
+    delta: fmtPct(data.daily_change_pct as number | null),
+    pe:
+      typeof data.pe_ratio === "number" && Number.isFinite(data.pe_ratio)
+        ? (data.pe_ratio as number).toFixed(1)
+        : "—",
+    peSub: "trailing",
+    range: (() => {
+      const lo = data.fifty_two_week_low as number | null;
+      const hi = data.fifty_two_week_high as number | null;
+      if (lo == null || hi == null) return "—";
+      return `${lo.toFixed(1)}—${hi.toFixed(1)}`;
+    })(),
+    rangeSub: "52w",
+    q1: q1.rev,
+    q1Delta: quarterDelta(last2[0], last2[1]) ?? "",
+    q4: q4.rev,
+    q4Delta: "",
+    spark: [],
+  };
+}
+
+function buildCorrelationFromTool(
+  data: Record<string, unknown>,
+): CorrelationRow[] {
+  const rows: CorrelationRow[] = [];
+  const sp = data.vs_sp500 as number | undefined;
+  const sec = data.vs_sector_etf as number | undefined;
+  const secSym = (data.sector_etf_symbol as string | undefined) ?? "SECTOR";
+  const peers = (data.vs_peers as Record<string, number> | undefined) ?? {};
+  if (typeof sp === "number") rows.push({ label: "vs. S&P 500", value: sp });
+  if (typeof sec === "number")
+    rows.push({ label: `vs. ${secSym} · sector`, value: sec });
+  for (const [peer, v] of Object.entries(peers)) {
+    if (typeof v === "number") rows.push({ label: `vs. ${peer} · peer`, value: v });
+  }
+  return rows;
+}
+
+function buildSentimentFromTool(data: Record<string, unknown>): Sentiment {
+  const dist = (data.distribution as Record<string, number> | undefined) ?? {};
+  const score = (data.overall_score as number | null) ?? 0;
+  const label =
+    score > 0.2 ? "positive" : score < -0.2 ? "negative" : "neutral";
+  return {
+    pos: dist.positive ?? 0,
+    neu: dist.neutral ?? 0,
+    neg: dist.negative ?? 0,
+    score,
+    conf: (data.confidence as number | null) ?? 0.8,
+    label,
+  };
+}
+
+function relTime(iso: string | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric" }).toLowerCase();
+}
+
+function sourceFromUrl(u: string): string {
+  try {
+    return new URL(u).hostname.replace(/^www\./, "").split(".")[0].toUpperCase();
+  } catch {
+    return "WEB";
+  }
+}
+
+// Parse partial streaming JSON for the analysis_summary value.
+// Returns the accumulated text inside "analysis_summary":"…" (still streaming
+// if the closing quote hasn't arrived yet).
+function extractStreamingSummary(buf: string): string | null {
+  const key = '"analysis_summary"';
+  const idx = buf.indexOf(key);
+  if (idx === -1) return null;
+  let i = idx + key.length;
+  while (i < buf.length && /[\s:]/.test(buf[i])) i++;
+  if (buf[i] !== '"') return null;
+  i++;
+  let out = "";
+  while (i < buf.length) {
+    const ch = buf[i];
+    if (ch === "\\" && i + 1 < buf.length) {
+      const n = buf[i + 1];
+      out += n === "n" ? "\n" : n === "t" ? "\t" : n;
+      i += 2;
+      continue;
+    }
+    if (ch === '"') return out;
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
+export function useRealAgentStream(
+  jobId: string | null,
+  apiBase?: string,
+): { state: StreamState; controls: StreamControlsValue } {
+  const base =
+    apiBase ??
+    (typeof process !== "undefined"
+      ? process.env.NEXT_PUBLIC_API_BASE_URL
+      : undefined) ??
+    "http://localhost:8000";
+  const [state, setState] = useState<StreamState>({
+    ...TIMELINE_INITIAL,
+    caseId: jobId ? `j-${jobId.slice(0, 6)}` : "",
+  });
+  const startRef = useRef(performance.now());
+  const [elapsed, setElapsed] = useState(0);
+  const synthBufRef = useRef<string>("");
+  const eventCountRef = useRef(0);
+  const stepStartRef = useRef<Record<string, number>>({});
+
+  const apply = useCallback((m: (s: StreamState) => StreamState) => setState(m), []);
+
+  // Tick elapsed for the controls progress bar
+  useEffect(() => {
+    const id = setInterval(() => {
+      setElapsed(performance.now() - startRef.current);
+    }, 100);
+    return () => clearInterval(id);
+  }, []);
+
+  // Subscribe to SSE
+  useEffect(() => {
+    if (!jobId) return;
+    // Hydrate from the snapshot endpoint first (handles late navigation /
+    // page reloads where events have already been emitted)
+    let cancelled = false;
+    void (async () => {
+      try {
+        const r = await fetch(`${base}/status/${jobId}`);
+        if (!r.ok) return;
+        const snap = await r.json();
+        if (cancelled) return;
+        if (snap?.report) {
+          // Replay terminal state directly from the persisted report
+          apply((s) => mergeReportIntoState(s, snap.report));
+        } else if (snap?.query) {
+          apply((s) => ({ ...s, query: snap.query }));
+        }
+      } catch {
+        /* offline / 404 — let SSE drive the state */
+      }
+    })();
+
+    const es = new EventSource(`${base}/status/${jobId}/stream`);
+    const types = [
+      "ticker_resolved",
+      "ticker_resolution_failed",
+      "planner_decision",
+      "tool_start",
+      "tool_end",
+      "reflection_thought",
+      "replan",
+      "synthesis_token",
+      "done",
+      "error",
+    ];
+
+    const handler = (type: string) => (ev: MessageEvent) => {
+      let data: Record<string, unknown> = {};
+      try {
+        data = JSON.parse(ev.data);
+      } catch {
+        return;
+      }
+      apply((s) => reduce(s, type, data, synthBufRef, eventCountRef, stepStartRef));
+      if (type === "done" || type === "error") {
+        es.close();
+      }
+    };
+
+    for (const t of types) es.addEventListener(t, handler(t) as EventListener);
+    es.onerror = () => {
+      /* EventSource auto-reconnects; if the backend isn't there we still show
+         whatever the snapshot fetch hydrated. */
+    };
+
+    return () => {
+      cancelled = true;
+      es.close();
+    };
+  }, [jobId, base, apply]);
+
+  const replay = useCallback(() => {
+    setState({
+      ...TIMELINE_INITIAL,
+      caseId: jobId ? `j-${jobId.slice(0, 6)}` : "",
+    });
+    synthBufRef.current = "";
+    eventCountRef.current = 0;
+    stepStartRef.current = {};
+    startRef.current = performance.now();
+    setElapsed(0);
+    // Re-fetch snapshot so the report comes back if it was already filed
+    if (jobId) {
+      void fetch(`${base}/status/${jobId}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((snap) => {
+          if (snap?.report) {
+            setState((s) => mergeReportIntoState(s, snap.report));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [jobId, base]);
+
+  const togglePlay = useCallback(() => {
+    // Real streams can't be paused — the backend is shipping events live.
+    // No-op to keep the StreamControls UI consistent.
+  }, []);
+
+  return {
+    state,
+    controls: {
+      replay,
+      togglePlay,
+      playing: !state.done,
+      elapsed,
+      done: state.done,
+    },
+  };
+}
+
+function reduce(
+  s: StreamState,
+  type: string,
+  data: Record<string, unknown>,
+  synthBufRef: { current: string },
+  eventCountRef: { current: number },
+  stepStartRef: { current: Record<string, number> },
+): StreamState {
+  switch (type) {
+    case "ticker_resolved": {
+      const ticker = (data.ticker as string) ?? s.ticker;
+      const name = (data.company_name as string) ?? ticker;
+      return {
+        ...s,
+        ticker,
+        companyName: name.endsWith(".") ? name : `${name}.`,
+        exchange: (data.exchange as string) ?? "NYSE",
+      };
+    }
+    case "ticker_resolution_failed": {
+      return {
+        ...s,
+        failed: true,
+        failedReason: (data.reason as string) ?? "ticker_unknown",
+      };
+    }
+    case "planner_decision": {
+      const tools = (data.tools as string[]) ?? [];
+      const plan = (data.plan as string) ?? "plan";
+      const pass = (data.pass as number) ?? 0;
+      eventCountRef.current += 1;
+      return {
+        ...s,
+        events: [
+          ...s.events,
+          {
+            kind: pass === 0 ? "plan" : "replan",
+            title:
+              pass === 0
+                ? `Plan · ${tools.length} tool${tools.length === 1 ? "" : "s"}`
+                : `Re-plan · ${tools.length} tool${tools.length === 1 ? "" : "s"}`,
+            body: plan,
+            dur: "—",
+          },
+        ],
+        replanned: pass > 0 ? true : s.replanned,
+      };
+    }
+    case "tool_start": {
+      const name = (data.tool as string) ?? "tool";
+      const input = data.input as Record<string, unknown> | undefined;
+      stepStartRef.current[name] = performance.now();
+      return {
+        ...s,
+        currentTool: {
+          kind: name === "edgar_filings" ? "tool" : "tool",
+          name,
+          input: input ? JSON.stringify(input) : undefined,
+          sub: `running ${name}…`,
+        },
+      };
+    }
+    case "tool_end": {
+      const name = (data.tool as string) ?? "tool";
+      const summary = (data.output_summary as string) ?? "";
+      const latency = (data.latency_ms as number) ?? 0;
+      const status = (data.status as string) ?? "success";
+      const tdata = data.data as Record<string, unknown> | null;
+
+      let next: StreamState = {
+        ...s,
+        currentTool: null,
+        events: [
+          ...s.events,
+          {
+            kind: "tool",
+            title: name,
+            body: summary,
+            dur: latency >= 1000 ? `${(latency / 1000).toFixed(2)}s` : `${latency}ms`,
+          },
+        ],
+      };
+
+      if (status !== "success" || !tdata) return next;
+
+      if (name === "market_data") {
+        next = {
+          ...next,
+          market: buildMarketFromTool(tdata),
+          // also seed identity if not already set
+          ticker: s.ticker || ((tdata.ticker as string) ?? ""),
+          companyName:
+            s.companyName ||
+            ((tdata.company_name as string)
+              ? `${tdata.company_name}.`
+              : ((tdata.ticker as string) ?? "")),
+          sector: s.sector || ((tdata.sector as string) ?? ""),
+        };
+      } else if (name === "correlation") {
+        next = { ...next, correlation: buildCorrelationFromTool(tdata) };
+      } else if (name === "news_sentiment" || name === "news_sentiment_peer") {
+        next = { ...next, sentiment: buildSentimentFromTool(tdata) };
+      }
+      return next;
+    }
+    case "reflection_thought": {
+      const fired = data.fired as boolean;
+      const trig = (data.trigger_evaluated as string) ?? "";
+      const reason = (data.reasoning as string) ?? "";
+      if (!fired) return s;
+      return {
+        ...s,
+        reflectionFired: true,
+        events: [
+          ...s.events,
+          {
+            kind: "reflect",
+            title: `critic · ${trig} fired`,
+            body: reason,
+            dur: "—",
+            flag: true,
+          },
+        ],
+      };
+    }
+    case "replan": {
+      const triggers = (data.triggers_fired as string[]) ?? [];
+      return {
+        ...s,
+        replanned: true,
+        events: [
+          ...s.events,
+          {
+            kind: "replan",
+            title: `Re-plan · ${triggers.length} trigger${triggers.length === 1 ? "" : "s"}`,
+            body: triggers.join(" · "),
+            dur: "—",
+          },
+        ],
+      };
+    }
+    case "synthesis_token": {
+      const tok = (data.token as string) ?? "";
+      synthBufRef.current += tok;
+      const summary = extractStreamingSummary(synthBufRef.current);
+      if (summary == null) return s;
+      return { ...s, narrative: summary };
+    }
+    case "done": {
+      const report = data.report as Record<string, unknown> | undefined;
+      if (!report) return { ...s, done: true, narrativeDone: true };
+      return mergeReportIntoState(s, report);
+    }
+    case "error": {
+      return {
+        ...s,
+        done: true,
+        failed: true,
+        failedReason: (data.message as string) ?? "error",
+        narrativeDone: true,
+      };
+    }
+  }
+  return s;
+}
+
+function mergeReportIntoState(
+  s: StreamState,
+  report: Record<string, unknown>,
+): StreamState {
+  const ms = report.market_snapshot as Record<string, unknown> | undefined;
+  const corr = report.correlation_analysis as Record<string, unknown> | undefined;
+  const sd = report.sentiment_distribution as Record<string, unknown> | undefined;
+  const ticker = (report.company_ticker as string) ?? s.ticker;
+  const name = (report.company_name as string) ?? ticker;
+  const findingsArr = (report.key_findings as string[]) ?? [];
+  const citationsArr = (report.citation_sources as string[]) ?? [];
+  const findings: Finding[] = findingsArr.slice(0, 3).map((b, i) => ({
+    n: String(i + 1).padStart(2, "0"),
+    color: FINDING_COLORS[i % FINDING_COLORS.length],
+    h: b.split(/[.!?]/)[0].slice(0, 80) || b.slice(0, 80),
+    b,
+  }));
+  const articlesArr = sd?.articles as
+    | Array<{ url: string; title?: string; source?: string; published_at?: string }>
+    | undefined;
+  const citations: Citation[] = citationsArr.slice(0, 4).map((url, i) => {
+    const meta = articlesArr?.find((a) => a.url === url);
+    return {
+      source: meta?.source || sourceFromUrl(url),
+      title: meta?.title || url,
+      when: relTime(meta?.published_at),
+      color: CITATION_COLORS[i % CITATION_COLORS.length],
+    };
+  });
+  const generatedAt = report.generated_at as string | undefined;
+  const filedAt = generatedAt
+    ? `Filed at ${new Date(generatedAt).toLocaleTimeString(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`
+    : s.filedAt;
+
+  return {
+    ...s,
+    done: true,
+    ticker,
+    companyName: name.endsWith(".") ? name : `${name}.`,
+    sector: s.sector || (ms?.sector as string) || "",
+    marketCap: ms?.market_cap
+      ? `Market cap ${fmtMoney(ms.market_cap as number)}`
+      : s.marketCap,
+    market: ms ? buildMarketFromTool(ms) : s.market,
+    correlation: corr ? buildCorrelationFromTool(corr) : s.correlation,
+    sentiment: sd
+      ? buildSentimentFromTool({
+          distribution: sd,
+          overall_score: report.sentiment_score,
+          confidence: report.confidence,
+        })
+      : s.sentiment,
+    narrative: (report.analysis_summary as string) ?? s.narrative,
+    narrativeDone: true,
+    findings,
+    citations,
+    filedAt,
+    alertTag: (report.alert_tag as string | null) ?? s.alertTag,
+    monitorTrigger:
+      (report.monitor_trigger as string | null) ?? s.monitorTrigger,
   };
 }
 

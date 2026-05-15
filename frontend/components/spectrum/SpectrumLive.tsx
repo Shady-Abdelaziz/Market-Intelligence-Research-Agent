@@ -21,6 +21,7 @@ import {
   StreamControls,
   TIMELINE_INITIAL,
   useAgentStream,
+  useRealAgentStream,
 } from "./stream";
 import type {
   Citation,
@@ -68,8 +69,12 @@ function toolCallCount(state: StreamState) {
   return state.events.filter((e) => e.kind === "tool").length + (state.currentTool ? 1 : 0);
 }
 
-export default function SpectrumLive() {
-  const { state, controls } = useAgentStream();
+export default function SpectrumLive({ jobId }: { jobId?: string } = {}) {
+  // When a jobId is provided we subscribe to the real backend SSE stream.
+  // Without one, fall back to the scripted Coca-Cola design preview.
+  const real = useRealAgentStream(jobId ?? null);
+  const demo = useAgentStream();
+  const { state, controls } = jobId ? real : demo;
   return (
     <StreamCtx.Provider value={{ state, controls }}>
       <SpectrumGlobals />
@@ -283,6 +288,16 @@ function SpectrumHero() {
   const hasMarket = !!state.market;
   const hasSent = !!state.sentiment;
   const reflectN = (state.reflectionFired ? 1 : 0) + (state.replanned ? 1 : 0);
+  const tickerPill = state.ticker
+    ? `${state.exchange || "NYSE"} : ${state.ticker}`
+    : "TICKER : PENDING";
+  // Split the company name into a bold head ("Tesla") + a muted tail
+  // ("Inc.") if the name has a trailing entity suffix; otherwise show the
+  // whole thing in bold.
+  const name = state.companyName || "Resolving…";
+  const splitAt = name.search(/\b(Inc|Corp|Corporation|Company|Ltd|Plc|Group|Holdings)\.?$/i);
+  const head = splitAt > 0 ? name.slice(0, splitAt).trim() : name;
+  const tail = splitAt > 0 ? name.slice(splitAt) : null;
   return (
     <section style={{ padding: "48px 40px 40px" }}>
       <div
@@ -294,25 +309,44 @@ function SpectrumHero() {
           flexWrap: "wrap",
         }}
       >
-        <span style={{ color: S.text3, fontSize: 13, cursor: "pointer" }}>← Archive</span>
+        <a href="/" style={{ color: S.text3, fontSize: 13, textDecoration: "none" }}>
+          ← Archive
+        </a>
         <span style={{ color: S.text4 }}>·</span>
-        <Eyebrow>Case j-92a7f3</Eyebrow>
-        <span style={{ color: S.text4 }}>·</span>
-        <Eyebrow>Filed at 14:08 GMT</Eyebrow>
-        <span style={{ color: S.text4 }}>·</span>
-        {state.done && (
-          <Fade in>
-            <Tag color={S.coral} solid>
-              Proactive alert
-            </Tag>
-          </Fade>
+        <Eyebrow>{state.caseId ? `Case ${state.caseId}` : "Case pending"}</Eyebrow>
+        {state.filedAt && (
+          <>
+            <span style={{ color: S.text4 }}>·</span>
+            <Eyebrow>{state.filedAt}</Eyebrow>
+          </>
+        )}
+        {state.alertTag && (
+          <>
+            <span style={{ color: S.text4 }}>·</span>
+            <Fade in>
+              <Tag color={S.coral} solid>
+                Proactive alert
+              </Tag>
+            </Fade>
+          </>
         )}
         {reflectN > 0 && (
-          <Fade in>
-            <Tag color={S.amber}>
-              {reflectN} reflection{reflectN > 1 ? "s" : ""} fired
+          <>
+            <span style={{ color: S.text4 }}>·</span>
+            <Fade in>
+              <Tag color={S.amber}>
+                {reflectN} reflection{reflectN > 1 ? "s" : ""} fired
+              </Tag>
+            </Fade>
+          </>
+        )}
+        {state.failed && (
+          <>
+            <span style={{ color: S.text4 }}>·</span>
+            <Tag color={S.rose} solid>
+              {state.failedReason || "failed"}
             </Tag>
-          </Fade>
+          </>
         )}
       </div>
 
@@ -338,13 +372,17 @@ function SpectrumHero() {
             letterSpacing: 1,
           }}
         >
-          NYSE : KO
+          {tickerPill}
         </span>
-        <span style={{ color: S.text3, fontSize: 14 }}>Beverages — Non-Alcoholic</span>
-        <span style={{ color: S.text4 }}>·</span>
-        <span style={{ color: S.text3, fontSize: 14 }}>Market cap $268.4B</span>
-        <span style={{ color: S.text4 }}>·</span>
-        <span style={{ color: S.text3, fontSize: 14 }}>Listed 1919</span>
+        {state.sector && (
+          <span style={{ color: S.text3, fontSize: 14 }}>{state.sector}</span>
+        )}
+        {state.marketCap && (
+          <>
+            <span style={{ color: S.text4 }}>·</span>
+            <span style={{ color: S.text3, fontSize: 14 }}>{state.marketCap}</span>
+          </>
+        )}
       </div>
 
       <h1
@@ -357,8 +395,10 @@ function SpectrumHero() {
           whiteSpace: "nowrap",
         }}
       >
-        Coca-Cola
-        <span style={{ color: S.text3, marginLeft: 18, fontWeight: 400 }}>Company.</span>
+        {head}
+        {tail && (
+          <span style={{ color: S.text3, marginLeft: 18, fontWeight: 400 }}>{tail}</span>
+        )}
       </h1>
 
       <div
@@ -389,7 +429,7 @@ function SpectrumHero() {
               letterSpacing: -0.2,
             }}
           >
-            Should I be worried about Coca-Cola&apos;s beverage volume trends going into summer?
+            {state.query || "Awaiting query…"}
           </div>
         </div>
 
@@ -629,12 +669,25 @@ function NarrativeCard() {
   const { state } = useStream();
   const hasAny = !!state.narrative.length;
   const text = state.narrative;
-  const hlPhrase = "sector-correlated weakness";
-  const hasHl = text.includes(hlPhrase);
+  // Highlight a notable phrase if present. Demo uses "sector-correlated
+  // weakness"; for real reports, highlight the most-coral phrase among a
+  // small library so the eye still has something to land on.
+  const HL_CANDIDATES = [
+    "sector-correlated weakness",
+    "elasticity headwinds",
+    "multiple compression",
+    "margin compression",
+    "earnings beat",
+    "guidance cut",
+    "execution risk",
+    "regulatory tailwind",
+  ];
+  const hlPhrase = HL_CANDIDATES.find((p) => text.toLowerCase().includes(p)) ?? "";
+  const hasHl = !!hlPhrase && text.toLowerCase().includes(hlPhrase);
   let parts: [string, string, string];
   if (hasHl) {
-    const idx = text.indexOf(hlPhrase);
-    parts = [text.slice(0, idx), hlPhrase, text.slice(idx + hlPhrase.length)];
+    const idx = text.toLowerCase().indexOf(hlPhrase);
+    parts = [text.slice(0, idx), text.slice(idx, idx + hlPhrase.length), text.slice(idx + hlPhrase.length)];
   } else {
     parts = [text, "", ""];
   }
