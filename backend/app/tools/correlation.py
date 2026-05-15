@@ -14,7 +14,6 @@ import yfinance as yf
 
 from app.config import get_settings
 from app.tools.base import Tool
-from app.tools.market_data import SECTOR_ETF_MAP
 
 _settings = get_settings()
 
@@ -91,7 +90,10 @@ class CorrelationTool(Tool):
                     "type": "object",
                     "properties": {
                         "ticker": {"type": "string"},
-                        "sector_etf": {"type": "string", "description": "e.g. XLK, XLE, defaults to SPY"},
+                        "sector_etf": {
+                            "type": "string",
+                            "description": "e.g. XLK, XLE, defaults to SPY",
+                        },
                         "peers": {"type": "array", "items": {"type": "string"}},
                         "window_days": {"type": "integer", "default": 90},
                     },
@@ -112,7 +114,9 @@ class CorrelationTool(Tool):
         window_days = window_days or _settings.reflection_analysis_window_days
         if not sector_etf:
             sector_etf = "SPY"
-        return await asyncio.to_thread(_compute_correlations, ticker, sector_etf, peers, window_days)
+        return await asyncio.to_thread(
+            _compute_correlations, ticker, sector_etf, peers, window_days
+        )
 
     def summarize(self, output: dict[str, Any]) -> str:
         return (

@@ -76,10 +76,14 @@ class JobBudget:
         return cost
 
 
-def estimate_cost(model: str, prompt_tokens: int, completion_tokens: int, cached: bool = False) -> float:
+def estimate_cost(
+    model: str, prompt_tokens: int, completion_tokens: int, cached: bool = False
+) -> float:
     pricing = _PRICING.get("models", {}).get(model)
     if not pricing:
         pricing = _PRICING.get("default", {"input": 1.0, "output": 3.0})
-    input_rate = pricing.get("cached_input" if cached and "cached_input" in pricing else "input", 0.0)
+    input_rate = pricing.get(
+        "cached_input" if cached and "cached_input" in pricing else "input", 0.0
+    )
     output_rate = pricing.get("output", 0.0)
     return (prompt_tokens * input_rate + completion_tokens * output_rate) / 1_000_000.0

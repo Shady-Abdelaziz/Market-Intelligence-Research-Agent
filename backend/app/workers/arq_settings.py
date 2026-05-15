@@ -21,6 +21,7 @@ def _redis_settings() -> RedisSettings | None:
 async def on_startup(ctx: dict) -> None:
     from app.cache.redis_cache import init_cache
     from app.resilience.http_client import init_client
+
     init_client()
     await init_cache()
 
@@ -28,6 +29,7 @@ async def on_startup(ctx: dict) -> None:
 async def on_shutdown(ctx: dict) -> None:
     from app.cache.redis_cache import close_cache
     from app.resilience.http_client import close_client
+
     await close_cache()
     await close_client()
 

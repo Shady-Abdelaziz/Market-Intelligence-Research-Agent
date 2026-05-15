@@ -7,6 +7,7 @@ elapses. Each upstream gets its own breaker instance.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 import pybreaker
@@ -72,14 +73,10 @@ async def call_breaker_async(upstream: str, coro_fn, /, *args, **kwargs) -> Any:
         result = await coro_fn(*args, **kwargs)
     except Exception:
         # Manually record failure on the breaker
-        try:
+        with contextlib.suppress(Exception):
             breaker.call(lambda: (_ for _ in ()).throw(Exception("recorded failure")))
-        except Exception:
-            pass
         raise
     # Success — reset the breaker if it was half-open
-    try:
+    with contextlib.suppress(Exception):
         breaker.call(lambda: None)
-    except Exception:
-        pass
     return result

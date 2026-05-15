@@ -7,7 +7,7 @@ rather than leaking raw queries to callers.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -25,7 +25,7 @@ from app.persistence.models import (
 
 
 def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class JobRepo:
@@ -43,9 +43,7 @@ class JobRepo:
 
     async def mark_running(self, job_id: uuid.UUID | str) -> None:
         await self.session.execute(
-            update(Job)
-            .where(Job.id == job_id)
-            .values(status="running", started_at=_now_utc())
+            update(Job).where(Job.id == job_id).values(status="running", started_at=_now_utc())
         )
 
     async def mark_completed(
@@ -155,9 +153,7 @@ class MonitorRepo:
 
     async def deactivate(self, ticker: str) -> bool:
         result = await self.session.execute(
-            update(MonitoringTarget)
-            .where(MonitoringTarget.ticker == ticker)
-            .values(active=False)
+            update(MonitoringTarget).where(MonitoringTarget.ticker == ticker).values(active=False)
         )
         return (result.rowcount or 0) > 0
 
@@ -274,7 +270,9 @@ class ArticleRepo:
                 ticker=ticker,
                 raw_json=raw_json,
                 sentiment_label=sentiment_label,
-                sentiment_score=Decimal(str(sentiment_score)) if sentiment_score is not None else None,
+                sentiment_score=Decimal(str(sentiment_score))
+                if sentiment_score is not None
+                else None,
                 cached_until=cached_until,
             )
         )

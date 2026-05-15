@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
@@ -32,6 +31,7 @@ async def session(engine) -> AsyncIterator[AsyncSession]:
 def _patch_module_engine(monkeypatch, engine):
     """Make app.persistence.db use the in-memory engine for the duration."""
     from app.persistence import db as db_mod
+
     monkeypatch.setattr(db_mod, "engine", engine)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     monkeypatch.setattr(db_mod, "SessionFactory", factory)

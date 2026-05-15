@@ -7,8 +7,16 @@ import re
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 _TRACKING_PARAMS = {
-    "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-    "fbclid", "gclid", "mc_cid", "mc_eid", "ref",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "fbclid",
+    "gclid",
+    "mc_cid",
+    "mc_eid",
+    "ref",
 }
 
 
@@ -18,12 +26,11 @@ def normalize_url(url: str) -> str:
     host = parsed.netloc.lower()
     path = parsed.path.rstrip("/") or "/"
     cleaned_query = [
-        (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+        (k, v)
+        for k, v in parse_qsl(parsed.query, keep_blank_values=True)
         if k.lower() not in _TRACKING_PARAMS
     ]
-    return urlunparse(
-        (parsed.scheme.lower(), host, path, "", urlencode(cleaned_query), "")
-    )
+    return urlunparse((parsed.scheme.lower(), host, path, "", urlencode(cleaned_query), ""))
 
 
 def url_hash(url: str) -> str:
@@ -39,7 +46,7 @@ def title_fingerprint(title: str | None) -> str | None:
     tokens = cleaned.split()
     if len(tokens) < 3:
         return hashlib.sha256(lowered.encode("utf-8")).hexdigest()
-    shingles = sorted({" ".join(tokens[i:i + 3]) for i in range(len(tokens) - 2)})
+    shingles = sorted({" ".join(tokens[i : i + 3]) for i in range(len(tokens) - 2)})
     return hashlib.sha256(" ".join(shingles).encode("utf-8")).hexdigest()
 
 

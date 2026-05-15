@@ -64,7 +64,11 @@ async def run(state: AgentState, llm_factory) -> AgentState:
             await emit(
                 job_id,
                 "ticker_resolved",
-                {"ticker": verified["ticker"], "company_name": verified["company_name"], "method": "regex"},
+                {
+                    "ticker": verified["ticker"],
+                    "company_name": verified["company_name"],
+                    "method": "regex",
+                },
             )
             return {**state, **verified, "peers": []}
 
@@ -90,7 +94,11 @@ async def run(state: AgentState, llm_factory) -> AgentState:
                 await emit(
                     job_id,
                     "ticker_resolved",
-                    {"ticker": verified["ticker"], "company_name": verified["company_name"], "method": "llm"},
+                    {
+                        "ticker": verified["ticker"],
+                        "company_name": verified["company_name"],
+                        "method": "llm",
+                    },
                 )
                 return {**state, **verified, "peers": []}
     except Exception as e:

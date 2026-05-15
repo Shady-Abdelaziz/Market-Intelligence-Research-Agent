@@ -10,7 +10,7 @@ yfinance is synchronous; we run it in a thread pool.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import yfinance as yf
@@ -64,12 +64,18 @@ def _fetch_ticker_blocking(ticker: str) -> dict[str, Any]:
         if qf is not None and not qf.empty and "Total Revenue" in qf.index:
             rev_row = qf.loc["Total Revenue"].dropna()
             for date_col, rev in list(rev_row.items())[:2]:
-                quarter = f"{date_col.year} Q{((date_col.month - 1) // 3) + 1}" if hasattr(date_col, "year") else str(date_col)
+                quarter = (
+                    f"{date_col.year} Q{((date_col.month - 1) // 3) + 1}"
+                    if hasattr(date_col, "year")
+                    else str(date_col)
+                )
                 quarterly_revenues.append(
                     {
                         "quarter": quarter,
                         "revenue_usd": float(rev) if rev == rev else None,
-                        "reported_at": date_col.isoformat() if hasattr(date_col, "isoformat") else str(date_col),
+                        "reported_at": date_col.isoformat()
+                        if hasattr(date_col, "isoformat")
+                        else str(date_col),
                     }
                 )
     except Exception:
@@ -92,7 +98,7 @@ def _fetch_ticker_blocking(ticker: str) -> dict[str, Any]:
         "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
         "last_two_quarterly_revenues": quarterly_revenues,
         "delisted": price is None and not quarterly_revenues,
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": datetime.now(UTC).isoformat(),
     }
 
 
@@ -114,7 +120,10 @@ class MarketDataTool(Tool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "ticker": {"type": "string", "description": "Stock ticker symbol, e.g. 'TSLA'"},
+                        "ticker": {
+                            "type": "string",
+                            "description": "Stock ticker symbol, e.g. 'TSLA'",
+                        },
                     },
                     "required": ["ticker"],
                 },

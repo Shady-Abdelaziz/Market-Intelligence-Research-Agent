@@ -6,6 +6,7 @@ from datetime import date, datetime
 
 try:
     import pandas_market_calendars as mcal  # type: ignore
+
     _HAS_MCAL = True
 except Exception:  # pragma: no cover
     _HAS_MCAL = False

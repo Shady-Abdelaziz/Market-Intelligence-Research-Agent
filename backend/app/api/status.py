@@ -44,7 +44,11 @@ async def stream_status(job_id: str, request: Request) -> EventSourceResponse:
             raise HTTPException(status_code=404, detail="job_not_found")
 
     last_event_id_header = request.headers.get("last-event-id")
-    last_id = int(last_event_id_header) if last_event_id_header and last_event_id_header.isdigit() else None
+    last_id = (
+        int(last_event_id_header)
+        if last_event_id_header and last_event_id_header.isdigit()
+        else None
+    )
 
     async def event_gen():
         # Replay backlog
@@ -70,7 +74,7 @@ async def stream_status(job_id: str, request: Request) -> EventSourceResponse:
                     break
                 try:
                     msg = await asyncio.wait_for(q.get(), timeout=15.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Heartbeat keepalive
                     yield {"event": "ping", "data": "{}"}
                     continue

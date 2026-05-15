@@ -6,7 +6,7 @@ User-Agent identifying the caller and respects a 10 req/sec rate limit.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.cache.redis_cache import get as cache_get
@@ -44,6 +44,7 @@ async def _resolve_cik(ticker: str) -> str | None:
         return None
     # Parse CIK out of the atom feed (cheap heuristic)
     import re
+
     m = re.search(r"CIK=(\d+)", r.text)
     if m:
         cik = m.group(1).zfill(10)
@@ -103,7 +104,7 @@ class EdgarTool(Tool):
         accessions = recent.get("accessionNumber", []) or []
         primary_docs = recent.get("primaryDocument", []) or []
 
-        cutoff = datetime.now(timezone.utc).date() - timedelta(days=days)
+        cutoff = datetime.now(UTC).date() - timedelta(days=days)
         wanted = {"10-K", "10-Q", "8-K"}
         filings = []
         for form, date_str, acc, doc in zip(forms, dates, accessions, primary_docs, strict=False):

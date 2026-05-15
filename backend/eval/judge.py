@@ -45,7 +45,13 @@ async def score(report: dict) -> dict:
 
 async def mean_score(report: dict) -> float:
     s = await score(report)
-    keys = ["factuality", "schema_compliance", "citation_presence", "findings_actionability", "sentiment_plausibility"]
+    keys = [
+        "factuality",
+        "schema_compliance",
+        "citation_presence",
+        "findings_actionability",
+        "sentiment_plausibility",
+    ]
     nums = [float(s.get(k, 0)) for k in keys]
     return sum(nums) / len(nums)
 

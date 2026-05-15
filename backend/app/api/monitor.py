@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -30,7 +30,9 @@ async def monitor_start(req: MonitorStartRequest, request: Request) -> dict[str,
         try:
             b = await compute_baselines(ticker)
             from sqlalchemy import update
+
             from app.persistence.models import MonitoringTarget
+
             await session.execute(
                 update(MonitoringTarget)
                 .where(MonitoringTarget.id == target.id)
@@ -38,7 +40,7 @@ async def monitor_start(req: MonitorStartRequest, request: Request) -> dict[str,
                     baseline_price_mean=b.mean,
                     baseline_price_std=b.std,
                     baseline_volume_avg=b.volume_avg,
-                    baselines_computed_at=datetime.now(timezone.utc),
+                    baselines_computed_at=datetime.now(UTC),
                 )
             )
         except Exception as e:  # noqa: BLE001
@@ -64,7 +66,7 @@ async def monitor_start(req: MonitorStartRequest, request: Request) -> dict[str,
         "ticker": ticker,
         "cadence_seconds": cadence,
         "active": True,
-        "next_run_at": (datetime.now(timezone.utc) + timedelta(seconds=cadence)).isoformat(),
+        "next_run_at": (datetime.now(UTC) + timedelta(seconds=cadence)).isoformat(),
     }
 
 
@@ -80,9 +82,15 @@ async def list_monitors() -> list[MonitorRecord]:
                 peers=list(t.peers or []),
                 active=t.active,
                 last_run_at=t.last_run_at,
-                baseline_price_mean=float(t.baseline_price_mean) if t.baseline_price_mean is not None else None,
-                baseline_price_std=float(t.baseline_price_std) if t.baseline_price_std is not None else None,
-                baseline_volume_avg=float(t.baseline_volume_avg) if t.baseline_volume_avg is not None else None,
+                baseline_price_mean=float(t.baseline_price_mean)
+                if t.baseline_price_mean is not None
+                else None,
+                baseline_price_std=float(t.baseline_price_std)
+                if t.baseline_price_std is not None
+                else None,
+                baseline_volume_avg=float(t.baseline_volume_avg)
+                if t.baseline_volume_avg is not None
+                else None,
             )
             for t in targets
         ]

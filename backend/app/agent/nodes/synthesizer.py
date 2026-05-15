@@ -7,8 +7,9 @@ failure, re-prompts once with the error; second failure -> degraded report.
 
 from __future__ import annotations
 
+import contextlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.agent.events import emit
@@ -37,7 +38,9 @@ def _build_market_snapshot(md: dict[str, Any] | None) -> MarketSnapshot | None:
         QuarterlyRevenue(
             quarter=q["quarter"],
             revenue_usd=q.get("revenue_usd") or 0.0,
-            reported_at=datetime.fromisoformat(q["reported_at"]) if q.get("reported_at") else datetime.now(timezone.utc),
+            reported_at=datetime.fromisoformat(q["reported_at"])
+            if q.get("reported_at")
+            else datetime.now(UTC),
         )
         for q in (md.get("last_two_quarterly_revenues") or [])
     ]
@@ -81,7 +84,9 @@ def _build_distribution(ns: dict[str, Any] | None) -> SentimentDistribution:
                 "url": a["url"],
                 "title": a.get("title") or "",
                 "source": a.get("source") or "",
-                "published_at": datetime.fromisoformat(a["published_at"].replace("Z", "+00:00")) if a.get("published_at") else datetime.now(timezone.utc),
+                "published_at": datetime.fromisoformat(a["published_at"].replace("Z", "+00:00"))
+                if a.get("published_at")
+                else datetime.now(UTC),
                 "sentiment": a.get("sentiment", "neutral"),
                 "sentiment_score": float(a.get("sentiment_score", 0.0)),
                 "rationale": a.get("rationale"),
@@ -107,16 +112,12 @@ def _build_freshness(state: AgentState) -> DataFreshness:
     edgar_dt = None
     filings = edgar.get("filings") or []
     if filings:
-        try:
-            edgar_dt = datetime.fromisoformat(filings[0]["filed_on"]).replace(tzinfo=timezone.utc)
-        except Exception:
-            pass
-    md_dt = datetime.now(timezone.utc)
+        with contextlib.suppress(Exception):
+            edgar_dt = datetime.fromisoformat(filings[0]["filed_on"]).replace(tzinfo=UTC)
+    md_dt = datetime.now(UTC)
     if md.get("fetched_at"):
-        try:
+        with contextlib.suppress(Exception):
             md_dt = datetime.fromisoformat(md["fetched_at"])
-        except Exception:
-            pass
     return DataFreshness(newest_article_at=newest, market_data_at=md_dt, edgar_filing_at=edgar_dt)
 
 
@@ -127,12 +128,13 @@ def _stub_summary_and_findings(state: AgentState) -> dict[str, Any]:
     md = state.get("tool_results", {}).get("market_data") or {}
     ns = state.get("tool_results", {}).get("news_sentiment") or {}
     ticker = state.get("ticker") or "?"
-    overall = float((ns.get("overall_score") or 0.0))
+    overall = float(ns.get("overall_score") or 0.0)
     price = md.get("price")
     change = md.get("daily_change_pct")
     summary = (
         f"{state.get('company_name') or ticker} ({ticker}) trading at "
-        f"${price:.2f} ({change:+.2f}%). " if price and change is not None
+        f"${price:.2f} ({change:+.2f}%). "
+        if price and change is not None
         else f"{state.get('company_name') or ticker} ({ticker}). "
     )
     summary += (
@@ -173,7 +175,9 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
     user_payload = {
         "ticker": state.get("ticker"),
         "company_name": state.get("company_name"),
-        "tool_results_summary": {k: state["tool_results"][k] for k in state.get("tool_results", {})},
+        "tool_results_summary": {
+            k: state["tool_results"][k] for k in state.get("tool_results", {})
+        },
         "triggers_fired": state.get("triggers_fired", []),
     }
 
@@ -185,7 +189,12 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
         async for chunk in llm.stream(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": SYNTHESIZER_PROMPT + "\n\nDATA:\n" + json.dumps(user_payload, default=str)},
+                {
+                    "role": "user",
+                    "content": SYNTHESIZER_PROMPT
+                    + "\n\nDATA:\n"
+                    + json.dumps(user_payload, default=str),
+                },
             ],
         ):
             primary_model = primary_model or chunk.model
@@ -219,7 +228,7 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
         findings.append("Additional analysis pending — insufficient data on this dimension.")
 
     # Build the final report
-    primary_model = primary_model if 'primary_model' in dir() else None  # type: ignore
+    primary_model = primary_model if "primary_model" in dir() else None  # type: ignore
     primary_model_str = state.get("llm_model_used") or "x-ai/grok-4.3"
 
     report = AnalysisReport(
@@ -227,17 +236,22 @@ async def run(state: AgentState, llm_factory, budget: JobBudget) -> AgentState:
         company_name=state.get("company_name") or state["ticker"],
         analysis_summary=str(synthesis.get("analysis_summary", "")),
         sentiment_score=max(-1.0, min(1.0, overall_sentiment)),
-        market_snapshot=market_snapshot or MarketSnapshot(
-            price=0.0, daily_change_pct=0.0, volume=0,
-            market_cap=None, pe_ratio=None,
-            fifty_two_week_high=0.0, fifty_two_week_low=0.0,
+        market_snapshot=market_snapshot
+        or MarketSnapshot(
+            price=0.0,
+            daily_change_pct=0.0,
+            volume=0,
+            market_cap=None,
+            pe_ratio=None,
+            fifty_two_week_high=0.0,
+            fifty_two_week_low=0.0,
             last_two_quarterly_revenues=[],
         ),
         correlation_analysis=correlation,
         key_findings=findings,
         tools_used=state.get("tools_used_order", []),
         citation_sources=state.get("citation_urls", []),
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
         degraded=state.get("degraded", False),
         degradation_reason=state.get("degradation_reason"),
         reflection_passes=state.get("reflection_passes", 0),
@@ -294,9 +308,13 @@ def _make_degraded_report(state: AgentState) -> AnalysisReport:
         analysis_summary="Unable to identify a public ticker from the query.",
         sentiment_score=0.0,
         market_snapshot=MarketSnapshot(
-            price=0.0, daily_change_pct=0.0, volume=0,
-            market_cap=None, pe_ratio=None,
-            fifty_two_week_high=0.0, fifty_two_week_low=0.0,
+            price=0.0,
+            daily_change_pct=0.0,
+            volume=0,
+            market_cap=None,
+            pe_ratio=None,
+            fifty_two_week_high=0.0,
+            fifty_two_week_low=0.0,
             last_two_quarterly_revenues=[],
         ),
         correlation_analysis=CorrelationAnalysis(
@@ -309,7 +327,7 @@ def _make_degraded_report(state: AgentState) -> AnalysisReport:
         ],
         tools_used=[],
         citation_sources=[],
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
         degraded=True,
         degradation_reason=state.get("degradation_reason") or "TICKER_NOT_FOUND",
         reflection_passes=0,
@@ -317,7 +335,7 @@ def _make_degraded_report(state: AgentState) -> AnalysisReport:
         confidence=0.0,
         data_freshness=DataFreshness(
             newest_article_at=None,
-            market_data_at=datetime.now(timezone.utc),
+            market_data_at=datetime.now(UTC),
             edgar_filing_at=None,
         ),
         sentiment_distribution=SentimentDistribution(

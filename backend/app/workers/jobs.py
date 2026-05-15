@@ -4,7 +4,7 @@ monitoring tick.
 
 from __future__ import annotations
 
-import uuid
+import contextlib
 from typing import Any
 
 from app.agent.events import emit
@@ -42,6 +42,7 @@ async def _ensure_clients() -> None:
 
 async def analyze_ticker(ctx: dict[str, Any], job_id: str) -> None:
     import time
+
     token = job_id_var.set(job_id)
     t0 = time.monotonic()
     await _ensure_clients()
@@ -112,10 +113,8 @@ async def analyze_ticker(ctx: dict[str, Any], job_id: str) -> None:
         async with get_session() as session:
             await JobRepo(session).mark_failed(job_id, str(e))
         jobs_total.labels(status="failed").inc()
-        try:
+        with contextlib.suppress(Exception):
             await emit(job_id, "error", {"message": str(e)})
-        except Exception:
-            pass
     finally:
         job_id_var.reset(token)
 
@@ -132,8 +131,12 @@ async def monitor_tick(ctx: dict[str, Any], target_id: str) -> None:
         target = await MonitorRepo(session).get_by_ticker_id_or_ticker(target_id) if False else None
         # The repo doesn't expose get_by_id, so re-fetch via SQL
         from sqlalchemy import select
+
         from app.persistence.models import MonitoringTarget
-        result = await session.execute(select(MonitoringTarget).where(MonitoringTarget.id == target_id))
+
+        result = await session.execute(
+            select(MonitoringTarget).where(MonitoringTarget.id == target_id)
+        )
         target = result.scalar_one_or_none()
         if not target or not target.active:
             return
@@ -142,7 +145,9 @@ async def monitor_tick(ctx: dict[str, Any], target_id: str) -> None:
 
     # Recompute baselines
     try:
-        baselines = await compute_baselines(ticker, days=get_settings().monitor_baseline_window_days)
+        baselines = await compute_baselines(
+            ticker, days=get_settings().monitor_baseline_window_days
+        )
     except Exception as e:
         log.warning("monitor_baseline_failed", ticker=ticker, error=str(e))
         return
@@ -171,7 +176,9 @@ async def monitor_tick(ctx: dict[str, Any], target_id: str) -> None:
 
     # Persist new baselines + article hashes regardless
     async with get_session() as session:
-        merged_urls = list(dict.fromkeys((target.last_seen_article_urls or []) + article_hashes))[-50:]
+        merged_urls = list(dict.fromkeys((target.last_seen_article_urls or []) + article_hashes))[
+            -50:
+        ]
         await MonitorRepo(session).update_baselines_and_run(
             target_id=target.id,
             baseline_price_mean=baselines.mean,
@@ -188,9 +195,13 @@ async def monitor_tick(ctx: dict[str, Any], target_id: str) -> None:
             )
             # Tag job + link to target
             from sqlalchemy import update
+
             from app.persistence.models import Job
+
             await session.execute(
-                update(Job).where(Job.id == job.id).values(
+                update(Job)
+                .where(Job.id == job.id)
+                .values(
                     alert_tag="PROACTIVE_ALERT",
                     monitor_target_id=target.id,
                     triggers_fired=fired,
@@ -209,9 +220,12 @@ async def monitor_tick(ctx: dict[str, Any], target_id: str) -> None:
 # Patch MonitorRepo dummy method used above
 def _patch_repo() -> None:
     from app.persistence import repos as _repos
+
     if not hasattr(_repos.MonitorRepo, "get_by_ticker_id_or_ticker"):
+
         async def _stub(self, _):
             return None
+
         _repos.MonitorRepo.get_by_ticker_id_or_ticker = _stub  # type: ignore
 
 

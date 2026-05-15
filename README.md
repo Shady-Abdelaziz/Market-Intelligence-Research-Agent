@@ -127,6 +127,7 @@ Brings up **5 services**: postgres, redis, api (FastAPI on :8000), worker (arq),
 - Frontend: <http://localhost:3000>
 - API docs (Swagger): <http://localhost:8000/docs>
 - Prometheus metrics: <http://localhost:8000/metrics>
+- Grafana dashboard JSON: `observability/grafana/mira-dashboard.json` — import via *Dashboards → New → Import* against a Prometheus datasource pointed at `:8000/metrics`
 
 ### 3. Standalone single-container fallback (brief constraint)
 

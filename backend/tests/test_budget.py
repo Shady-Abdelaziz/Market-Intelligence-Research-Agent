@@ -19,7 +19,6 @@ def test_tool_call_budget_blocks_at_limit():
     b = JobBudget(max_tool_calls=2, max_tokens=1_000_000)
     b.record_tool_call()
     b.record_tool_call()
-    b.check_tool_call.__self__  # sanity
     with pytest.raises(BudgetExceeded):
         b.check_tool_call()
 

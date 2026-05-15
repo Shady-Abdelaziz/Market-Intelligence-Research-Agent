@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from arq import create_pool
 from fastapi import FastAPI, Request, Response
@@ -18,9 +18,8 @@ from app.api import analyze, monitor, ops, status
 from app.cache.redis_cache import close_cache, init_cache
 from app.config import get_settings
 from app.observability.logging import configure_logging, get_logger, request_id_var
-from app.persistence.db import dispose_engine
+from app.persistence.db import dispose_engine, get_session
 from app.persistence.repos import JobRepo
-from app.persistence.db import get_session
 from app.resilience.http_client import close_client, init_client
 from app.workers.arq_settings import _redis_settings
 

@@ -17,8 +17,9 @@ FinBERT. We avoid local ML inference to keep image size and RAM small.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.cache.dedupe import normalize_url, title_fingerprint, url_hash
@@ -109,9 +110,7 @@ def _relevant(article: dict[str, Any], ticker: str, company_name: str | None) ->
         return False
     if ticker.lower() in text:
         return True
-    if company_name and company_name.lower().split()[0] in text:
-        return True
-    return False
+    return bool(company_name and company_name.lower().split()[0] in text)
 
 
 def _parse_published(s: str | None) -> datetime | None:
@@ -137,7 +136,9 @@ def _merge_and_dedupe(*sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if existing:
                 # Merge marketaux sentiment if present
                 if art.get("marketaux_sentiment_score") is not None:
-                    existing.setdefault("marketaux_sentiment_score", art["marketaux_sentiment_score"])
+                    existing.setdefault(
+                        "marketaux_sentiment_score", art["marketaux_sentiment_score"]
+                    )
                 continue
             art["url_hash"] = h
             art["title_fingerprint"] = fp
@@ -147,7 +148,9 @@ def _merge_and_dedupe(*sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if fp:
                 by_fp[fp] = art
     merged = list(by_hash.values())
-    merged.sort(key=lambda a: a.get("published_dt") or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    merged.sort(
+        key=lambda a: a.get("published_dt") or datetime.min.replace(tzinfo=UTC), reverse=True
+    )
     return merged
 
 
@@ -265,10 +268,8 @@ class NewsSentimentTool(Tool):
                 neu += 1
             mx = art.get("marketaux_sentiment_score")
             if mx is not None:
-                try:
+                with contextlib.suppress(Exception):
                     cross_check_diffs.append(abs(float(mx) - s["score"]))
-                except Exception:
-                    pass
 
         overall = sum(scores) / len(scores) if scores else 0.0
         confidence = 1.0
@@ -287,7 +288,7 @@ class NewsSentimentTool(Tool):
             },
             "overall_score": overall,
             "confidence": confidence,
-            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "fetched_at": datetime.now(UTC).isoformat(),
         }
         await cache_set("news", cache_key, result, _settings.cache_ttl_news)
         return result

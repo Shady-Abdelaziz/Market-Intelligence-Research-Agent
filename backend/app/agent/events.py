@@ -5,6 +5,7 @@ per-job in-process pubsub queue (for live streaming).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections import defaultdict
 from typing import Any
@@ -41,7 +42,5 @@ async def emit(job_id: str, event_type: str, payload: dict[str, Any]) -> None:
     except Exception as e:  # noqa: BLE001
         log.warning("event_persist_failed", job_id=job_id, error=str(e))
     for q in list(_subscribers.get(job_id, [])):
-        try:
+        with contextlib.suppress(asyncio.QueueFull):
             q.put_nowait({"event": event_type, "data": safe})
-        except asyncio.QueueFull:
-            pass

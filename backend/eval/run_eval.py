@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -58,7 +58,9 @@ def check_expectations(case: dict, report: dict) -> dict:
     if "ticker" in exp:
         checks["ticker_matches"] = report.get("company_ticker") == exp["ticker"]
     if "key_findings_count" in exp:
-        checks["key_findings_exact_3"] = len(report.get("key_findings") or []) == exp["key_findings_count"]
+        checks["key_findings_exact_3"] = (
+            len(report.get("key_findings") or []) == exp["key_findings_count"]
+        )
     if "degraded" in exp:
         checks["degraded_flag_matches"] = bool(report.get("degraded")) == bool(exp["degraded"])
     if "degraded_or_failed" in exp:
@@ -82,14 +84,21 @@ async def main() -> int:
             report = await run_case(c)
             checks = check_expectations(c, report)
             passed = all(checks.values()) if checks else True
-            out.append({"case": c["name"], "passed": passed, "checks": checks, "report_excerpt": _excerpt(report)})
+            out.append(
+                {
+                    "case": c["name"],
+                    "passed": passed,
+                    "checks": checks,
+                    "report_excerpt": _excerpt(report),
+                }
+            )
             if passed:
                 pass_count += 1
         except Exception as e:  # noqa: BLE001
             log.error("eval_case_error", name=c["name"], error=str(e))
             out.append({"case": c["name"], "passed": False, "error": str(e)})
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     result_path = RESULTS_DIR / f"{ts}.json"
     result_path.write_text(json.dumps(out, indent=2, default=str))
     log.info("eval_complete", passed=pass_count, total=len(cases), out=str(result_path))

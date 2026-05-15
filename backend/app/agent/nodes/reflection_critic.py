@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from app.agent.events import emit
 from app.agent.state import AgentState
@@ -20,7 +20,10 @@ def trigger_sector_correlation(state: AgentState) -> tuple[bool, str]:
     if sector_corr is None:
         return False, "sector ETF correlation unavailable"
     if sector_corr > threshold:
-        return True, f"sector ETF correlation {sector_corr:.3f} > {threshold} → idiosyncratic signal missing; need peer comparison"
+        return (
+            True,
+            f"sector ETF correlation {sector_corr:.3f} > {threshold} → idiosyncratic signal missing; need peer comparison",
+        )
     return False, f"sector ETF correlation {sector_corr:.3f} ≤ {threshold} (no replan needed)"
 
 
@@ -32,7 +35,7 @@ def trigger_stale_news(state: AgentState) -> tuple[bool, str]:
     articles = news.get("articles") or []
     if not articles:
         return True, "news_sentiment returned zero articles"
-    threshold = datetime.now(timezone.utc) - timedelta(hours=threshold_hours)
+    threshold = datetime.now(UTC) - timedelta(hours=threshold_hours)
     pubs = []
     for a in articles:
         p = a.get("published_at")

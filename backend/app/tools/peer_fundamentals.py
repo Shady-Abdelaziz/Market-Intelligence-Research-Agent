@@ -12,7 +12,7 @@ across runs.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.tools.base import Tool
@@ -51,7 +51,7 @@ class PeerFundamentalsTool(Tool):
 
     async def _run(self, peers: list[str]) -> dict[str, Any]:
         peers = [p.upper().strip() for p in peers]
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         out: dict[str, Any] = {"peers": {}}
         for p in peers:
             q1 = _seeded_float(p, "q1", 5e9, 80e9)

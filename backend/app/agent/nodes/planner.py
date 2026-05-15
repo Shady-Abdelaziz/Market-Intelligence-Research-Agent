@@ -57,7 +57,9 @@ async def run(state: AgentState, llm_factory) -> AgentState:
     # Deterministic fallbacks based on triggers
     if "sector_correlation" in triggers and "peer_fundamentals" not in chosen:
         chosen.append("peer_fundamentals")
-    if ("stale_news" in triggers or "neutral_sentiment" in triggers) and "edgar_filings" not in chosen:
+    if (
+        "stale_news" in triggers or "neutral_sentiment" in triggers
+    ) and "edgar_filings" not in chosen:
         chosen.append("edgar_filings")
     if not chosen:
         chosen = ["edgar_filings"]

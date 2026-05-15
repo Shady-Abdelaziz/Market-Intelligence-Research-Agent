@@ -78,7 +78,9 @@ class LLMClient:
                     messages=self._apply_cache_markers(messages, candidate),
                     tools=tools,
                     tool_choice=tool_choice,
-                    temperature=temperature if temperature is not None else self._settings.llm_temperature,
+                    temperature=temperature
+                    if temperature is not None
+                    else self._settings.llm_temperature,
                     max_tokens=self._settings.llm_max_tokens,
                     response_format=response_format,
                 )
@@ -147,4 +149,11 @@ class LLMClient:
         llm_tokens_total.labels(model=model, type="completion").inc(ct)
         llm_cost_usd_total.labels(model=model).inc(cost)
         llm_call_latency_seconds.labels(model=model).observe(latency)
-        log.info("llm_call", model=model, prompt_tokens=pt, completion_tokens=ct, cost_usd=cost, latency_s=latency)
+        log.info(
+            "llm_call",
+            model=model,
+            prompt_tokens=pt,
+            completion_tokens=ct,
+            cost_usd=cost,
+            latency_s=latency,
+        )

@@ -5,8 +5,6 @@ from __future__ import annotations
 from decimal import Decimal
 from types import SimpleNamespace
 
-import pytest
-
 from app.monitoring.triggers import (
     trigger_new_articles,
     trigger_price_2sigma,

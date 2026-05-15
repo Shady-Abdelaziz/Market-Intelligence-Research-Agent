@@ -26,7 +26,9 @@ async def analyze(req: AnalyzeRequest, request: Request) -> AnalyzeResponse:
     else:
         # Standalone fallback: run inline
         import asyncio
+
         from app.workers.jobs import analyze_ticker
+
         asyncio.create_task(analyze_ticker({}, job_id))
 
     log.info("job_enqueued", job_id=job_id)
