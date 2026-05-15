@@ -1,0 +1,1416 @@
+"use client";
+
+import { createContext, useContext } from "react";
+import {
+  Btn,
+  CiteChip,
+  CorrBar,
+  Eyebrow,
+  Fade,
+  KIND_COLORS,
+  S,
+  SentimentBar,
+  Skel,
+  Spark,
+  SpectrumGlobals,
+  Stat,
+  Tag,
+} from "./primitives";
+import type { EventKind } from "./primitives";
+import {
+  StreamControls,
+  TIMELINE_INITIAL,
+  useAgentStream,
+} from "./stream";
+import type {
+  Citation,
+  CurrentTool,
+  Finding,
+  StreamControlsValue,
+  StreamState,
+  TimelineEvent,
+} from "./stream";
+
+type ColorName = "coral" | "amber" | "azure" | "mint" | "violet" | "rose";
+
+const COLOR_MAP: Record<ColorName, string> = {
+  coral: S.coral,
+  amber: S.amber,
+  azure: S.azure,
+  mint: S.mint,
+  violet: S.violet,
+  rose: S.rose,
+};
+
+const StreamCtx = createContext<{
+  state: StreamState;
+  controls: StreamControlsValue;
+}>({
+  state: TIMELINE_INITIAL,
+  controls: {
+    replay: () => {},
+    togglePlay: () => {},
+    playing: false,
+    elapsed: 0,
+    done: false,
+  },
+});
+
+const useStream = () => useContext(StreamCtx);
+
+function currentCost(state: StreamState) {
+  const toolCalls =
+    state.events.filter((e) => e.kind === "tool").length + (state.currentTool ? 1 : 0);
+  return Math.min(0.018, toolCalls * 0.003);
+}
+
+function toolCallCount(state: StreamState) {
+  return state.events.filter((e) => e.kind === "tool").length + (state.currentTool ? 1 : 0);
+}
+
+export default function SpectrumLive() {
+  const { state, controls } = useAgentStream();
+  return (
+    <StreamCtx.Provider value={{ state, controls }}>
+      <SpectrumGlobals />
+      <div
+        className="sp sp-page"
+        style={{
+          minHeight: "100vh",
+          background: S.bg,
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: -300,
+            right: -200,
+            width: 800,
+            height: 800,
+            background: `radial-gradient(circle, ${S.coralSoft} 0%, transparent 65%)`,
+            pointerEvents: "none",
+            zIndex: 0,
+            opacity: 0.8,
+          }}
+        />
+        <div
+          style={{
+            position: "absolute",
+            bottom: -400,
+            left: -200,
+            width: 700,
+            height: 700,
+            background: `radial-gradient(circle, ${S.violetSoft} 0%, transparent 65%)`,
+            pointerEvents: "none",
+            zIndex: 0,
+            opacity: 0.6,
+          }}
+        />
+
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <SpectrumTopBar />
+          <SpectrumHero />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "1.45fr 1fr",
+              gap: 24,
+              padding: "0 40px 40px",
+              alignItems: "flex-start",
+            }}
+          >
+            <SpectrumReport />
+            <SpectrumAgent />
+          </div>
+          <SpectrumFooter />
+        </div>
+      </div>
+      <StreamControls controls={controls} />
+    </StreamCtx.Provider>
+  );
+}
+
+function SpectrumTopBar() {
+  const { state } = useStream();
+  const status = state.done
+    ? "filed"
+    : state.currentTool
+      ? "streaming"
+      : state.events.length === 0
+        ? "queued"
+        : "thinking";
+  return (
+    <header
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 24,
+        padding: "16px 40px",
+        borderBottom: `1px solid ${S.border}`,
+        backdropFilter: "blur(12px)",
+        background: "rgba(247,245,240,0.78)",
+        position: "sticky",
+        top: 0,
+        zIndex: 50,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 9,
+            background: `linear-gradient(135deg, ${S.coral} 0%, ${S.violet} 100%)`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#fff",
+            fontWeight: 700,
+            fontSize: 14,
+          }}
+        >
+          ✦
+        </div>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: -0.2 }}>M.I.R.A.</div>
+          <div
+            className="sp-mono"
+            style={{ fontSize: 9, color: S.text3, letterSpacing: 0.6 }}
+          >
+            v1.0 · grok-4.3
+          </div>
+        </div>
+      </div>
+
+      <div style={{ width: 1, height: 24, background: S.border }} />
+
+      <nav style={{ display: "flex", gap: 4 }}>
+        {[
+          { name: "Analyze", active: true },
+          { name: "Monitor" },
+          { name: "Archive" },
+          { name: "Eval" },
+        ].map((n) => (
+          <span
+            key={n.name}
+            style={{
+              padding: "8px 14px",
+              fontSize: 13,
+              fontWeight: 500,
+              color: n.active ? S.text : S.text3,
+              background: n.active ? S.surfaceHi : "transparent",
+              borderRadius: 8,
+              cursor: "pointer",
+            }}
+          >
+            {n.name}
+          </span>
+        ))}
+      </nav>
+
+      <div style={{ flex: 1 }} />
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <Tag color={state.done ? S.mint : S.coral} dot>
+          {!state.done && (
+            <span
+              className="sp-pulse"
+              style={{
+                display: "inline-block",
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: S.coral,
+                marginRight: -2,
+              }}
+            />
+          )}
+          {status}
+        </Tag>
+        <div
+          className="sp-mono"
+          style={{
+            fontSize: 11,
+            color: S.text2,
+            padding: "5px 10px",
+            background: S.surface,
+            borderRadius: 8,
+            border: `1px solid ${S.border}`,
+          }}
+        >
+          <span style={{ color: S.text }}>${currentCost(state).toFixed(3)}</span>{" "}
+          <span style={{ color: S.text3 }}>/ $50.00</span>
+        </div>
+        <div
+          className="sp-mono"
+          style={{
+            fontSize: 11,
+            color: S.text2,
+            padding: "5px 10px",
+            background: S.surface,
+            borderRadius: 8,
+            border: `1px solid ${S.border}`,
+          }}
+        >
+          <span style={{ color: S.mint }}>●</span> {state.done ? "0" : "24"} / 8000 tk/s
+        </div>
+        <span style={{ width: 1, height: 20, background: S.border, margin: "0 4px" }} />
+        <div
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: 8,
+            background: `linear-gradient(135deg, ${S.azure} 0%, ${S.mint} 100%)`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 11,
+            fontWeight: 700,
+            color: "#fff",
+          }}
+        >
+          AE
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function SpectrumHero() {
+  const { state } = useStream();
+  const hasMarket = !!state.market;
+  const hasSent = !!state.sentiment;
+  const reflectN = (state.reflectionFired ? 1 : 0) + (state.replanned ? 1 : 0);
+  return (
+    <section style={{ padding: "48px 40px 40px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          marginBottom: 18,
+          flexWrap: "wrap",
+        }}
+      >
+        <span style={{ color: S.text3, fontSize: 13, cursor: "pointer" }}>← Archive</span>
+        <span style={{ color: S.text4 }}>·</span>
+        <Eyebrow>Case j-92a7f3</Eyebrow>
+        <span style={{ color: S.text4 }}>·</span>
+        <Eyebrow>Filed at 14:08 GMT</Eyebrow>
+        <span style={{ color: S.text4 }}>·</span>
+        {state.done && (
+          <Fade in>
+            <Tag color={S.coral} solid>
+              Proactive alert
+            </Tag>
+          </Fade>
+        )}
+        {reflectN > 0 && (
+          <Fade in>
+            <Tag color={S.amber}>
+              {reflectN} reflection{reflectN > 1 ? "s" : ""} fired
+            </Tag>
+          </Fade>
+        )}
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 16,
+          marginBottom: 14,
+          flexWrap: "wrap",
+        }}
+      >
+        <span
+          className="sp-mono"
+          style={{
+            fontSize: 14,
+            fontWeight: 600,
+            color: S.coral,
+            padding: "3px 9px",
+            background: S.coralSoft,
+            border: `1px solid ${S.coralLine}`,
+            borderRadius: 4,
+            letterSpacing: 1,
+          }}
+        >
+          NYSE : KO
+        </span>
+        <span style={{ color: S.text3, fontSize: 14 }}>Beverages — Non-Alcoholic</span>
+        <span style={{ color: S.text4 }}>·</span>
+        <span style={{ color: S.text3, fontSize: 14 }}>Market cap $268.4B</span>
+        <span style={{ color: S.text4 }}>·</span>
+        <span style={{ color: S.text3, fontSize: 14 }}>Listed 1919</span>
+      </div>
+
+      <h1
+        className="sp-h1"
+        style={{
+          fontSize: 88,
+          fontWeight: 600,
+          letterSpacing: "-0.035em",
+          lineHeight: 1,
+          whiteSpace: "nowrap",
+        }}
+      >
+        Coca-Cola
+        <span style={{ color: S.text3, marginLeft: 18, fontWeight: 400 }}>Company.</span>
+      </h1>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1.4fr 1fr",
+          gap: 40,
+          alignItems: "end",
+          marginTop: 36,
+        }}
+      >
+        <div
+          style={{
+            padding: "16px 20px",
+            background: S.surface,
+            border: `1px solid ${S.border}`,
+            borderLeft: `3px solid ${S.coral}`,
+            borderRadius: 8,
+          }}
+        >
+          <Eyebrow style={{ marginBottom: 6 }}>Operator&apos;s brief</Eyebrow>
+          <div
+            style={{
+              fontSize: 17,
+              color: S.text,
+              fontWeight: 500,
+              lineHeight: 1.4,
+              letterSpacing: -0.2,
+            }}
+          >
+            Should I be worried about Coca-Cola&apos;s beverage volume trends going into summer?
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 28,
+            justifyContent: "flex-end",
+            paddingBottom: 4,
+          }}
+        >
+          {hasMarket && state.market ? (
+            <Fade in>
+              <Stat
+                label="Last"
+                value={state.market.price}
+                delta={state.market.delta}
+                size={30}
+                align="right"
+              />
+            </Fade>
+          ) : (
+            <SkelStat label="Last" />
+          )}
+          <span style={{ width: 1, alignSelf: "stretch", background: S.border }} />
+          {hasSent && state.sentiment ? (
+            <Fade in>
+              <Stat
+                label="Sentiment"
+                value={state.sentiment.score.toFixed(2)}
+                sub={`conf ${state.sentiment.conf.toFixed(2)}`}
+                size={30}
+                align="right"
+                deltaColor={S.text3}
+              />
+            </Fade>
+          ) : (
+            <SkelStat label="Sentiment" />
+          )}
+          <span style={{ width: 1, alignSelf: "stretch", background: S.border }} />
+          <Stat
+            label="Tools used"
+            value={`${toolCallCount(state)} / 10`}
+            sub={reflectN ? `${reflectN} reflection${reflectN > 1 ? "s" : ""}` : "—"}
+            size={30}
+            align="right"
+            deltaColor={S.text3}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function SkelStat({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        alignItems: "flex-end",
+      }}
+    >
+      <Eyebrow>{label}</Eyebrow>
+      <Skel w={110} h={28} />
+      <Skel w={60} h={10} />
+    </div>
+  );
+}
+
+function SpectrumReport() {
+  return (
+    <main style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <MarketCard />
+      <CorrelationCard />
+      <NarrativeCard />
+      <FindingsCard />
+      <CitationsCard />
+    </main>
+  );
+}
+
+function Section({
+  serial,
+  name,
+  meta,
+  children,
+}: {
+  serial: string;
+  name: string;
+  meta?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <section
+      style={{
+        padding: 24,
+        background: S.surface,
+        border: `1px solid ${S.border}`,
+        borderRadius: 16,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 14,
+          marginBottom: 22,
+        }}
+      >
+        <Eyebrow serial={serial}>{name}</Eyebrow>
+        <span style={{ flex: 1, height: 1, background: S.border }} />
+        {meta && (
+          <span className="sp-mono" style={{ fontSize: 10, color: S.text3 }}>
+            {meta}
+          </span>
+        )}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function MarketCard() {
+  const { state } = useStream();
+  const m = state.market;
+  return (
+    <Section serial="01" name="Market snapshot" meta={m ? "yfinance · 142ms" : "waiting…"}>
+      {!m ? (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 20 }}>
+          {[...Array(5)].map((_, i) => (
+            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <Skel w={60} h={8} />
+              <Skel w={90} h={22} />
+              <Skel w={50} h={8} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Fade in>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 20 }}>
+            <Stat label="Price" value={m.price} delta={m.delta} sub="intraday" />
+            <Stat label="P/E ttm" value={m.pe} sub={m.peSub} />
+            <Stat label="52w range" value={m.range} sub={m.rangeSub} />
+            <Stat label="Q1 revenue" value={m.q1} delta={m.q1Delta} sub="filed 23 apr" />
+            <Stat label="Q4 revenue" value={m.q4} delta={m.q4Delta} sub="filed 13 feb" />
+          </div>
+          <div style={{ marginTop: 24, padding: "16px 4px 6px" }}>
+            <Eyebrow style={{ marginBottom: 8 }}>Price · 30d · vs 30d mean</Eyebrow>
+            <Spark data={m.spark} w={760} h={84} color={S.rose} fill />
+            <div
+              className="sp-mono"
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: 10,
+                color: S.text3,
+                marginTop: 6,
+              }}
+            >
+              <span>15 apr</span>
+              <span>μ $62.18 · σ $0.42</span>
+              <span>15 may</span>
+            </div>
+          </div>
+        </Fade>
+      )}
+    </Section>
+  );
+}
+
+function CorrelationCard() {
+  const { state } = useStream();
+  const c = state.correlation;
+  return (
+    <Section serial="02" name="Correlation" meta={c ? "Pearson · 90d" : "waiting…"}>
+      {!c ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {[...Array(4)].map((_, i) => (
+            <div
+              key={i}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "150px 1fr 64px",
+                gap: 18,
+                alignItems: "center",
+              }}
+            >
+              <Skel w={120} h={10} />
+              <Skel h={4} />
+              <Skel w={40} h={10} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Fade in>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {c.map((r, i) => (
+              <Fade key={r.label} in delay={i * 80}>
+                <CorrBar label={r.label} value={r.value} />
+              </Fade>
+            ))}
+          </div>
+        </Fade>
+      )}
+      {state.reflectionFired && (
+        <Fade in delay={120} style={{ marginTop: 18 }}>
+          <div
+            style={{
+              padding: "14px 18px",
+              background: S.amberSoft,
+              border: `1px solid ${S.amber}3a`,
+              borderRadius: 10,
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 12,
+            }}
+          >
+            <Tag color={S.amber} solid>
+              Reflection fired
+            </Tag>
+            <div style={{ fontSize: 13, color: S.text2, lineHeight: 1.5 }}>
+              XLP sits just under the 0.95 idiosyncratic threshold — sector beta
+              dominates, but does not fully explain. Sentiment was neutral-even, so a
+              second research pass was commissioned for analyst commentary and the
+              latest 10-Q.
+            </div>
+          </div>
+        </Fade>
+      )}
+    </Section>
+  );
+}
+
+function NarrativeCard() {
+  const { state } = useStream();
+  const hasAny = !!state.narrative.length;
+  const text = state.narrative;
+  const hlPhrase = "sector-correlated weakness";
+  const hasHl = text.includes(hlPhrase);
+  let parts: [string, string, string];
+  if (hasHl) {
+    const idx = text.indexOf(hlPhrase);
+    parts = [text.slice(0, idx), hlPhrase, text.slice(idx + hlPhrase.length)];
+  } else {
+    parts = [text, "", ""];
+  }
+  return (
+    <Section
+      serial="03"
+      name="Narrative"
+      meta={
+        state.narrativeDone ? "grok-4.3 · 4.2k tokens" : hasAny ? "streaming…" : "waiting…"
+      }
+    >
+      {!hasAny ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <Skel w="92%" h={20} />
+          <Skel w="86%" h={20} />
+          <Skel w="78%" h={20} />
+          <Skel w="60%" h={20} />
+        </div>
+      ) : (
+        <div
+          style={{
+            fontSize: 24,
+            lineHeight: 1.4,
+            color: S.text,
+            fontWeight: 500,
+            letterSpacing: -0.4,
+            maxWidth: 740,
+          }}
+        >
+          {parts[0]}
+          {parts[1] && (
+            <span
+              style={{
+                background: `linear-gradient(120deg, ${S.coralSoft} 0%, ${S.amberSoft} 100%)`,
+                padding: "2px 6px",
+                borderRadius: 4,
+                color: S.coral,
+                fontWeight: 600,
+              }}
+            >
+              {parts[1]}
+            </span>
+          )}
+          {parts[2]}
+          {!state.narrativeDone && <span className="sp-caret" />}
+        </div>
+      )}
+
+      {state.sentiment && (
+        <Fade in style={{ marginTop: 24 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 24,
+              padding: "16px 20px",
+              background: S.surfaceHi,
+              borderRadius: 12,
+            }}
+          >
+            <Eyebrow>Sentiment</Eyebrow>
+            <div style={{ flex: 1, maxWidth: 360 }}>
+              <SentimentBar
+                pos={state.sentiment.pos}
+                neu={state.sentiment.neu}
+                neg={state.sentiment.neg}
+              />
+            </div>
+            <Stat
+              label="Score"
+              value={state.sentiment.score.toFixed(2)}
+              sub={`conf ${state.sentiment.conf.toFixed(2)}`}
+              size={22}
+              align="right"
+              deltaColor={S.text3}
+            />
+          </div>
+        </Fade>
+      )}
+    </Section>
+  );
+}
+
+function FindingsCard() {
+  const { state } = useStream();
+  const f = state.findings;
+  return (
+    <Section
+      serial="04"
+      name="Key findings"
+      meta={f.length ? `${f.length} of 3 observations` : "waiting…"}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+        {[0, 1, 2].map((i) => {
+          const item: Finding | undefined = f[i];
+          if (!item) return <SkelFinding key={i} />;
+          const color = COLOR_MAP[item.color] ?? S.text;
+          return (
+            <Fade key={item.n} in>
+              <div
+                style={{
+                  padding: 18,
+                  background: S.surfaceHi,
+                  border: `1px solid ${S.border}`,
+                  borderTop: `2px solid ${color}`,
+                  borderRadius: 12,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <span
+                    className="sp-num"
+                    style={{
+                      fontSize: 28,
+                      fontWeight: 600,
+                      color,
+                      letterSpacing: -1,
+                      lineHeight: 1,
+                    }}
+                  >
+                    {item.n}
+                  </span>
+                  <Tag color={color}>finding</Tag>
+                </div>
+                <div
+                  style={{
+                    fontSize: 16,
+                    fontWeight: 600,
+                    color: S.text,
+                    lineHeight: 1.3,
+                    letterSpacing: -0.2,
+                  }}
+                >
+                  {item.h}
+                </div>
+                <div style={{ fontSize: 13, color: S.text2, lineHeight: 1.5 }}>
+                  {item.b}
+                </div>
+              </div>
+            </Fade>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+function SkelFinding() {
+  return (
+    <div
+      style={{
+        padding: 18,
+        background: S.surfaceHi,
+        border: `1px solid ${S.border}`,
+        borderTop: `2px solid ${S.border}`,
+        borderRadius: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        minHeight: 168,
+      }}
+    >
+      <Skel w={40} h={26} />
+      <Skel w="80%" h={16} />
+      <Skel w="100%" h={10} />
+      <Skel w="92%" h={10} />
+      <Skel w="60%" h={10} />
+    </div>
+  );
+}
+
+function CitationsCard() {
+  const { state } = useStream();
+  const c = state.citations;
+  return (
+    <Section
+      serial="05"
+      name="Sources"
+      meta={c.length ? `${c.length} of 7 referenced` : "waiting…"}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {[0, 1, 2, 3].map((i) => {
+          const item: Citation | undefined = c[i];
+          if (!item) return <SkelCite key={i} />;
+          return (
+            <Fade key={item.title} in>
+              <CiteChip
+                source={item.source}
+                title={item.title}
+                when={item.when}
+                color={COLOR_MAP[item.color] ?? S.azure}
+              />
+            </Fade>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+function SkelCite() {
+  return (
+    <div
+      style={{
+        padding: "14px 16px",
+        background: S.surface,
+        border: `1px solid ${S.border}`,
+        borderRadius: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        minHeight: 84,
+      }}
+    >
+      <Skel w={80} h={8} />
+      <Skel w="92%" h={14} />
+      <Skel w="60%" h={8} />
+    </div>
+  );
+}
+
+function SpectrumAgent() {
+  return (
+    <aside
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 20,
+        position: "sticky",
+        top: 80,
+        alignSelf: "flex-start",
+      }}
+    >
+      <NowExecuting />
+      <ReasoningTimeline />
+      <BudgetMeter />
+    </aside>
+  );
+}
+
+function NowExecuting() {
+  const { state } = useStream();
+  const tool: CurrentTool | null = state.currentTool;
+
+  if (!tool && !state.done) {
+    return (
+      <div
+        style={{
+          padding: 22,
+          background: S.surface,
+          border: `1px solid ${S.border}`,
+          borderRadius: 16,
+          minHeight: 200,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 12,
+        }}
+      >
+        <span
+          className="sp-pulse"
+          style={{ width: 10, height: 10, borderRadius: "50%", background: S.text4 }}
+        />
+        <Eyebrow>Agent · idle between tools</Eyebrow>
+        <span className="sp-mono" style={{ fontSize: 10, color: S.text4 }}>
+          planning the next step…
+        </span>
+      </div>
+    );
+  }
+
+  if (state.done) {
+    return (
+      <div
+        style={{
+          padding: 22,
+          background: S.surface,
+          border: `1px solid ${S.mint}3a`,
+          borderRadius: 16,
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            bottom: 0,
+            width: 3,
+            background: S.mint,
+          }}
+        />
+        <Eyebrow color={S.mint}>Filed · all done</Eyebrow>
+        <div
+          style={{
+            fontSize: 22,
+            fontWeight: 600,
+            color: S.text,
+            letterSpacing: -0.4,
+            marginTop: 8,
+          }}
+        >
+          Report ready.
+        </div>
+        <div style={{ fontSize: 13, color: S.text2, marginTop: 6, lineHeight: 1.5 }}>
+          Six tools called, two reflections fired, 4.2k tokens used. Dossier filed at
+          14:08:42 GMT.
+        </div>
+      </div>
+    );
+  }
+
+  const k = (tool && KIND_COLORS[tool.kind]) ?? KIND_COLORS.tool;
+  return (
+    <Fade in>
+      <div
+        style={{
+          padding: 22,
+          background: S.surface,
+          border: `1px solid ${S.border}`,
+          borderRadius: 16,
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            bottom: 0,
+            width: 3,
+            background: k.c,
+            boxShadow: `0 0 16px ${k.c}80`,
+          }}
+        />
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 12,
+          }}
+        >
+          <span
+            className="sp-pulse"
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: k.c,
+              boxShadow: `0 0 8px ${k.c}`,
+            }}
+          />
+          <Eyebrow color={k.c}>
+            Now executing · step {String(state.events.length + 1).padStart(2, "0")}
+          </Eyebrow>
+          <span style={{ flex: 1 }} />
+          <span className="sp-mono" style={{ fontSize: 10, color: S.text3 }}>
+            live
+          </span>
+        </div>
+
+        <div
+          style={{
+            fontSize: 20,
+            fontWeight: 600,
+            color: S.text,
+            letterSpacing: -0.4,
+            lineHeight: 1.25,
+          }}
+        >
+          {tool?.name}
+        </div>
+        {tool?.sub && (
+          <div style={{ fontSize: 13, color: S.text2, marginTop: 8, lineHeight: 1.5 }}>
+            {tool.sub}
+          </div>
+        )}
+
+        {tool?.input && (
+          <div
+            style={{
+              marginTop: 14,
+              padding: "10px 12px",
+              background: "#1a1614",
+              borderRadius: 8,
+              fontFamily: S.fMono,
+              fontSize: 11,
+              color: "rgba(243,241,236,0.8)",
+              lineHeight: 1.6,
+              border: `1px solid rgba(0,0,0,0.1)`,
+            }}
+          >
+            <div style={{ color: "rgba(243,241,236,0.4)" }}>{"// input"}</div>
+            <div>
+              {tool.input}
+              <span className="sp-caret" />
+            </div>
+          </div>
+        )}
+      </div>
+    </Fade>
+  );
+}
+
+function ReasoningTimeline() {
+  const { state } = useStream();
+  const rows: Array<TimelineEvent & { future?: boolean }> = [...state.events];
+  if (state.currentTool && !state.done) {
+    rows.push({
+      kind: state.currentTool.kind,
+      title: state.currentTool.name,
+      body: state.currentTool.sub ?? "running…",
+      dur: "—",
+      live: true,
+    });
+  }
+
+  return (
+    <div
+      style={{
+        background: S.surface,
+        border: `1px solid ${S.border}`,
+        borderRadius: 16,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          padding: "20px 22px 14px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: 16,
+              fontWeight: 600,
+              color: S.text,
+              letterSpacing: -0.2,
+            }}
+          >
+            Reasoning
+          </div>
+          <div
+            className="sp-mono"
+            style={{ fontSize: 10, color: S.text3, letterSpacing: 0.4 }}
+          >
+            {rows.length} event{rows.length !== 1 ? "s" : ""} ·{" "}
+            {state.reflectionFired ? "1 reflection · " : ""}
+            {state.replanned ? "1 replan" : ""}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 4 }}>
+          {(Object.entries(KIND_COLORS) as Array<[EventKind, { c: string; label: string }]>)
+            .slice(0, 5)
+            .map(([k, v]) => (
+              <span
+                key={k}
+                title={v.label}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  background: v.c,
+                  boxShadow: `0 0 6px ${v.c}80`,
+                }}
+              />
+            ))}
+        </div>
+      </div>
+
+      <div
+        style={{
+          borderTop: `1px solid ${S.border}`,
+          padding: "16px 22px 22px",
+          maxHeight: 520,
+          overflow: "auto",
+        }}
+      >
+        {rows.length === 0 ? (
+          <div
+            style={{
+              padding: "20px 0",
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              alignItems: "center",
+              color: S.text3,
+            }}
+          >
+            <Eyebrow>queued · waiting on first event</Eyebrow>
+            <Skel w="80%" h={10} />
+            <Skel w="60%" h={10} />
+          </div>
+        ) : (
+          <div style={{ position: "relative" }}>
+            <div
+              style={{
+                position: "absolute",
+                left: 7,
+                top: 12,
+                bottom: 12,
+                width: 1,
+                background: S.border,
+              }}
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {rows.map((e, i) => (
+                <Fade key={i} in>
+                  <EventRow {...e} done={!e.live && !e.future} />
+                </Fade>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EventRow({
+  kind,
+  title,
+  body,
+  dur,
+  done,
+  live,
+  flag,
+  future,
+}: {
+  kind: EventKind;
+  title: string;
+  body: string;
+  dur: string;
+  done?: boolean;
+  live?: boolean;
+  flag?: boolean;
+  future?: boolean;
+}) {
+  const k = KIND_COLORS[kind] ?? KIND_COLORS.tool;
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "16px 1fr auto",
+        gap: 14,
+        alignItems: "flex-start",
+        opacity: future ? 0.5 : 1,
+      }}
+    >
+      <div style={{ paddingTop: 5, display: "flex", justifyContent: "center" }}>
+        <span
+          className={live ? "sp-pulse" : ""}
+          style={{
+            width: 10,
+            height: 10,
+            borderRadius: kind === "reflect" || kind === "replan" ? 2 : "50%",
+            background: live ? k.c : done ? k.c : S.surface,
+            border: `2px solid ${k.c}`,
+            boxShadow: live ? `0 0 10px ${k.c}` : "none",
+          }}
+        />
+      </div>
+      <div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 3,
+          }}
+        >
+          <Tag color={k.c} style={{ padding: "1px 7px 1px", fontSize: 9 }}>
+            {k.label}
+          </Tag>
+          {flag && (
+            <Tag color={S.coral} solid style={{ fontSize: 9 }}>
+              fired
+            </Tag>
+          )}
+        </div>
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 500,
+            color: S.text,
+            letterSpacing: -0.1,
+            lineHeight: 1.3,
+          }}
+        >
+          {title}
+        </div>
+        <div
+          className="sp-mono"
+          style={{ fontSize: 11, color: S.text3, marginTop: 2, lineHeight: 1.5 }}
+        >
+          {body}
+          {live && <span className="sp-caret" />}
+        </div>
+      </div>
+      <span
+        className="sp-mono"
+        style={{ fontSize: 10, color: S.text3, paddingTop: 6, whiteSpace: "nowrap" }}
+      >
+        {dur}
+      </span>
+    </div>
+  );
+}
+
+function BudgetMeter() {
+  const { state } = useStream();
+  const tc = toolCallCount(state);
+  const cost = currentCost(state);
+  const tokens = Math.min(4200, state.events.length * 500 + state.narrative.length * 6);
+  const pct = Math.round(
+    ((tokens / 8000 + cost / 0.04 + tc / 10) / 3) * 100
+  );
+  const meters = [
+    {
+      label: "Tokens",
+      used: tokens < 1000 ? String(tokens) : (tokens / 1000).toFixed(1) + "k",
+      cap: "8k",
+      pct: (tokens / 8000) * 100,
+      color: S.azure,
+    },
+    {
+      label: "Cost",
+      used: `$${cost.toFixed(3)}`,
+      cap: "$0.04",
+      pct: (cost / 0.04) * 100,
+      color: S.coral,
+    },
+    {
+      label: "Tool calls",
+      used: String(tc),
+      cap: "10",
+      pct: (tc / 10) * 100,
+      color: S.mint,
+    },
+  ];
+  return (
+    <div
+      style={{
+        padding: 20,
+        background: S.surface,
+        border: `1px solid ${S.border}`,
+        borderRadius: 16,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          marginBottom: 14,
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: S.text,
+              letterSpacing: -0.2,
+            }}
+          >
+            Budget
+          </div>
+          <div className="sp-mono" style={{ fontSize: 10, color: S.text3 }}>
+            tokens · cost · time
+          </div>
+        </div>
+        <span
+          className="sp-num"
+          style={{ fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}
+        >
+          {pct}
+          <span style={{ color: S.text3, fontSize: 14 }}>%</span>
+        </span>
+      </div>
+
+      {meters.map((m) => (
+        <div key={m.label} style={{ marginBottom: 14 }}>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              marginBottom: 6,
+            }}
+          >
+            <span className="sp-mono" style={{ fontSize: 11, color: S.text2 }}>
+              {m.label}
+            </span>
+            <span className="sp-num" style={{ fontSize: 12, color: S.text }}>
+              {m.used}
+              <span style={{ color: S.text3 }}> / {m.cap}</span>
+            </span>
+          </div>
+          <div
+            style={{
+              height: 4,
+              background: S.surfaceHi,
+              borderRadius: 2,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.min(100, m.pct)}%`,
+                height: "100%",
+                background: m.color,
+                borderRadius: 2,
+                boxShadow: `0 0 8px ${m.color}80`,
+                transition: "width 300ms ease",
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SpectrumFooter() {
+  const { state, controls } = useStream();
+  return (
+    <footer
+      style={{
+        borderTop: `1px solid ${S.border}`,
+        padding: "20px 40px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 20,
+      }}
+    >
+      <div style={{ display: "flex", gap: 18, alignItems: "center" }}>
+        <span
+          className="sp-mono"
+          style={{ fontSize: 10, color: S.text3, letterSpacing: 0.6 }}
+        >
+          {state.done
+            ? "FILED 14:08:42 GMT · MODEL grok-4.3 · LATENCY 8.3s · CACHE 31%"
+            : `STREAMING · ${(controls.elapsed / 1000).toFixed(1)}s ELAPSED · ${toolCallCount(state)} TOOL CALLS · MODEL grok-4.3`}
+        </span>
+        <Tag color={state.done ? S.mint : S.coral} dot>
+          {state.done ? "all circuits closed" : "live"}
+        </Tag>
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <Btn ghost small onClick={controls.replay}>
+          ↻ Replay run
+        </Btn>
+        <Btn ghost small>
+          Export JSON
+        </Btn>
+        <Btn primary small iconRight={<span>→</span>}>
+          Share dossier
+        </Btn>
+      </div>
+    </footer>
+  );
+}
