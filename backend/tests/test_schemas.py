@@ -76,3 +76,19 @@ def test_sentiment_score_bounded():
         _minimal_report(sentiment_score=1.5)
     with pytest.raises(ValidationError):
         _minimal_report(sentiment_score=-2.0)
+
+
+def test_proactive_alert_tag_and_monitor_trigger_propagate():
+    """Brief §3B: monitor-triggered analyses must be marked PROACTIVE_ALERT
+    and the firing trigger must be recorded."""
+    r = _minimal_report(alert_tag="PROACTIVE_ALERT", monitor_trigger="price_2sigma")
+    assert r.alert_tag == "PROACTIVE_ALERT"
+    assert r.monitor_trigger == "price_2sigma"
+    dumped = r.model_dump(mode="json")
+    assert dumped["alert_tag"] == "PROACTIVE_ALERT"
+    assert dumped["monitor_trigger"] == "price_2sigma"
+
+
+def test_monitor_trigger_rejects_unknown_values():
+    with pytest.raises(ValidationError):
+        _minimal_report(monitor_trigger="not_a_real_trigger")

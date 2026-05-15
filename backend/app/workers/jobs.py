@@ -51,12 +51,23 @@ async def analyze_ticker(ctx: dict[str, Any], job_id: str) -> None:
         async with get_session() as session:
             await JobRepo(session).mark_running(job_id)
 
-        # Load job
+        # Load job — preserve any pre-set alert/trigger metadata that the
+        # monitor_tick has stamped on the row, so the synthesized report can
+        # carry PROACTIVE_ALERT and the firing trigger through.
         async with get_session() as session:
             job = await JobRepo(session).get(job_id)
             if not job:
                 return
             query = job.query
+            alert_tag = job.alert_tag
+            preset_triggers: list[str] = list(job.triggers_fired or [])
+
+        # For schema compatibility, monitor_trigger is a single literal —
+        # pick the first fired monitor trigger if any.
+        monitor_triggers = [
+            t for t in preset_triggers if t in ("articles", "price_2sigma", "volume_2x")
+        ]
+        monitor_trigger = monitor_triggers[0] if monitor_triggers else None
 
         budget = JobBudget.from_settings()
         tools_by_name = build_tools(llm_factory_default)
@@ -77,6 +88,8 @@ async def analyze_ticker(ctx: dict[str, Any], job_id: str) -> None:
             "degraded": False,
             "tokens_used": 0,
             "cost_usd": 0.0,
+            "alert_tag": alert_tag,
+            "monitor_trigger": monitor_trigger,
         }
         final_state = await graph.ainvoke(initial, {"configurable": {"thread_id": str(job_id)}})
 
@@ -91,7 +104,9 @@ async def analyze_ticker(ctx: dict[str, Any], job_id: str) -> None:
                 tool_calls_count=budget.tool_calls_made,
                 reflection_passes=final_state.get("reflection_passes", 0),
                 triggers_fired=final_state.get("triggers_fired", []),
-                alert_tag=ctx.get("alert_tag"),
+                # Preserve PROACTIVE_ALERT (set by monitor_tick before enqueue)
+                # or use whatever the state ended up with.
+                alert_tag=alert_tag or ctx.get("alert_tag"),
             )
             # Token ledger summary
             for model, slot in budget.per_model.items():
