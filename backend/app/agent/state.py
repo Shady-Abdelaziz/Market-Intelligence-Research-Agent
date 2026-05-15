@@ -41,5 +41,11 @@ class AgentState(TypedDict, total=False):
     degraded: bool
     degradation_reason: str | None
 
+    # Monitoring-alert provenance (set by analyze_ticker when the job was
+    # enqueued by monitor_tick, surfaced on the final report)
+    alert_tag: str | None
+    monitor_trigger: str | None
+
     # Output
     report: dict[str, Any] | None
+    llm_model_used: str | None

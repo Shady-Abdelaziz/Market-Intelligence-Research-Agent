@@ -66,6 +66,101 @@ flowchart LR
 
 ---
 
+## Brief compliance matrix
+
+A line-by-line map from the Uniparticle brief (CS-001 Rev. B) to the code that satisfies it. Pointing reviewers at the exact files so nothing is left as "trust me."
+
+### §2A — Backend Architecture & Service Design (mandatory)
+
+| Brief item | Code location |
+|---|---|
+| `POST /analyze` accepting a natural-language query | `backend/app/api/analyze.py` |
+| Returns `job_id` immediately, runs work async | `backend/app/api/analyze.py` enqueues to arq · worker in `backend/app/workers/jobs.py::analyze_ticker` |
+| `GET /status/{job_id}` for status checks | `backend/app/api/status.py` (`get_status` + live SSE at `/status/{id}/stream`) |
+| Structured JSON output (Pydantic) | `backend/app/api/schemas.py::AnalysisReport` |
+| Env vars / config (API keys, LLM provider, model, intervals) | `backend/app/config.py` (Pydantic Settings) + `.env.example` |
+
+### §2B — Agentic Behavior & Tool Use (mandatory)
+
+| Brief item | Code location |
+|---|---|
+| Multi-step planning behaviour | LangGraph state machine: `backend/app/agent/graph.py` (planner → tool_executor → reflection_critic → conditional edge). Planner consults the LLM on **every** pass — initial query → tool list, reflection → addition tools — with a deterministic fallback if the LLM is unreachable. |
+| Function-calling-style tool dispatch | Each tool exposes an OpenAI-compatible `schema()` (`tools/base.py`). Planner emits a typed `next_tools` list; tool executor invokes by name (`backend/app/agent/nodes/tool_executor.py`). |
+| **Tool 1 — Market Data** (yfinance, price/change/volume/cap/P/E/52w/last 2 quarterly revenues) | `backend/app/tools/market_data.py` |
+| **Tool 2 — News + Sentiment** (NewsAPI top 5, per-article tags, distribution) | `backend/app/tools/news_sentiment.py` |
+| **Tool 3 — Peer/Correlation** (mock for fundamentals, real for correlations) | `backend/app/tools/peer_fundamentals.py` (mock per brief wording) + `backend/app/tools/correlation.py` (real Pearson) |
+| **Bonus Tool 4 — EDGAR filings** (10-K / 10-Q / 8-K) | `backend/app/tools/edgar.py` (used on reflection when news is stale) |
+| **Bonus Tool 5 — Peer news** (real NewsAPI for a direct competitor) | `backend/app/tools/news_sentiment.py::PeerNewsTool` (used on reflection trigger 1) |
+| Sentiment trade-off documented | This README — *Sentiment trade-off* table below |
+
+### §2C — Output Structure (mandatory minimum fields)
+
+Every field below is required by the brief AND present on `AnalysisReport` (`backend/app/api/schemas.py:103-129`):
+
+`company_ticker` · `company_name` · `analysis_summary` · `sentiment_score` (bounded -1..1 by validator) · `market_snapshot` (object) · `correlation_analysis` (object with vs_sp500, vs_sector_etf, vs_peers) · `key_findings` (exactly 3 — enforced by validator) · `tools_used` (ordered) · `citation_sources` (URLs) · `generated_at` (ISO 8601).
+
+A real validated report is at `sample_output.json` (passes `AnalysisReport.model_validate`).
+
+### §3A — Dynamic Reflection (advanced)
+
+| Brief trigger | Threshold | Code |
+|---|---|---|
+| Sector ETF correlation > 0.95 → fetch competitor's recent news + price action | `REFLECTION_SECTOR_CORR_THRESHOLD=0.95` | `reflection_critic.py::trigger_sector_correlation` → planner adds `peer_news` (real NewsAPI for first peer ticker) AND `peer_fundamentals` (mock). Peer price action is already in `correlation.vs_peers`. |
+| All news > 72 h old → broaden / fetch SEC EDGAR | `REFLECTION_STALE_NEWS_HOURS=72` | `reflection_critic.py::trigger_stale_news` → planner adds `edgar_filings` |
+| Perfectly neutral or evenly split sentiment → fetch additional context | n/a | `reflection_critic.py::trigger_neutral_sentiment` → planner adds `edgar_filings` |
+| Re-plan capped by `MAX_REFLECTION_PASSES` | `config.py` (default 2) | `reflection_critic.py::run` |
+
+### §3B — Long-Term Memory / Persistent Monitoring (advanced)
+
+| Brief item | Code |
+|---|---|
+| `POST /monitor_start` registers per-ticker background task | `backend/app/api/monitor.py::start_monitor` |
+| Configurable cadence (default 24 h, trading days) | `MonitoringTarget.cadence_seconds=86_400`; trading-day gate `backend/app/monitoring/scheduler.py::is_trading_day` (`pandas_market_calendars` NYSE) |
+| Trigger (a) ≥5 new articles since last run | `backend/app/monitoring/triggers.py::trigger_new_articles` |
+| Trigger (b) closing price > 2σ from 30-day mean | `triggers.py::trigger_price_2sigma` |
+| Trigger (c) volume > 2× 30-day average | `triggers.py::trigger_volume_2x` |
+| Tag fired analyses `PROACTIVE_ALERT` + record which trigger fired | `backend/app/workers/jobs.py::monitor_tick` stamps Job row; `analyze_ticker` seeds `state.alert_tag` + `state.monitor_trigger`; synthesizer surfaces both on the `AnalysisReport` |
+| Per-ticker state persisted across restarts | `MonitoringTarget` table (last_run_at, baseline_price_mean/std, baseline_volume_avg, last_seen_article_urls) — `backend/app/persistence/models.py:109-133` |
+
+### §3C — Observability & Cost Controls (advanced)
+
+| Brief item | Code |
+|---|---|
+| Per-job structured logs per tool invocation (input / latency / status) | `backend/app/agent/nodes/tool_executor.py` emits `tool_start` / `tool_end` SSE + `ToolLogRepo.log` persists to `tool_invocations` table |
+| Token usage per job (prompt / completion / est. cost) | `backend/app/llm/budget.py::JobBudget.record_llm_usage` + `backend/app/llm/pricing.yaml` + `LLMCallRepo` |
+| Configurable max tool-call budget (default 10) | `MAX_TOOL_CALLS=10` (`config.py`); enforced in `JobBudget.check_tool_call()` |
+| Production-grade extras (not asked, included) | `structlog` JSON logs, Prometheus `/metrics`, 17-panel Grafana dashboard (`observability/grafana/mira-dashboard.json`), per-upstream `pybreaker` circuit breakers, request-id propagation |
+
+### §3D — Evaluation (advanced)
+
+| Brief item | Code |
+|---|---|
+| ≥3 documented test cases | 6 cases in `backend/eval/golden_cases.yaml` (AAPL self-correlation, unknown ticker, delisted LEHMQ, TSLA idiosyncratic, KO sector-correlated, MSFT basic) |
+| ½–1 page on measuring quality at scale | This README — *Evaluation strategy* section (7 layers from structural regression to drift detection) |
+| Property-based assertions on the schema | 33-test pytest suite (`backend/tests/`) — sentiment bounds, exactly-3 findings, alert-tag propagation, neutral-sentiment trigger logic, etc. |
+
+### §3E — Containerisation (advanced)
+
+| Brief item | Code |
+|---|---|
+| Single `docker build` + `docker run` (self-contained) | `backend/Dockerfile` + `backend/entrypoint.sh` — runs in SQLite mode without compose, see *Standalone single-container fallback* below |
+| `docker-compose.yml` for multi-service deploy | `docker-compose.yml` brings up postgres + redis + api + worker + frontend (5 services) |
+| README setup section | See *Setup and run* below |
+
+### §5 — Deliverables
+
+| Required | Where |
+|---|---|
+| Source code | `backend/` (FastAPI + agent + tools + persistence) + `frontend/` (Next.js 14) |
+| `Dockerfile` + `docker-compose.yml` | `backend/Dockerfile`, `frontend/Dockerfile`, `docker-compose.yml` |
+| README with diagram, choices, setup, eval, known limitations | This file (architecture diagram in Mermaid below, *Known Limitations* section at the end) |
+| Dependency manifest | `backend/pyproject.toml`, `backend/requirements.txt`, `frontend/package.json` |
+| `.env.example` | `.env.example` (all required env vars enumerated) |
+| Sample output | `sample_output.json` (validates against `AnalysisReport` schema) |
+| Postman collection | `docs/postman_collection.json` (all endpoints with example requests + responses) |
+
+---
+
 ## Technology choices and rationale
 
 | Layer | Choice | Why |

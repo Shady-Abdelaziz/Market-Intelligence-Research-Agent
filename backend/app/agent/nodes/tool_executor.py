@@ -36,9 +36,74 @@ def _build_args(name: str, state: AgentState) -> dict[str, Any]:
         }
     if name == "peer_fundamentals":
         return {"peers": state.get("peers") or _default_peers(ticker)}
+    if name == "peer_news":
+        return {
+            "peers": state.get("peers") or _default_peers(ticker),
+            "company_name": state.get("company_name"),
+        }
     if name == "edgar_filings":
         return {"ticker": ticker, "days": 30}
     return {"ticker": ticker}
+
+
+def _trim_for_stream(name: str, data: Any) -> Any:
+    """Trim a tool's structured result for the SSE wire — keep the fields the
+    live UI needs, drop heavy payloads."""
+    if not isinstance(data, dict):
+        return data
+    if name in ("news_sentiment", "peer_news"):
+        return {
+            "ticker": data.get("ticker"),
+            "distribution": data.get("distribution"),
+            "overall_score": data.get("overall_score"),
+            "confidence": data.get("confidence"),
+            "articles": [
+                {
+                    "url": a.get("url"),
+                    "title": a.get("title"),
+                    "source": a.get("source"),
+                    "published_at": a.get("published_at"),
+                    "sentiment": a.get("sentiment"),
+                    "sentiment_score": a.get("sentiment_score"),
+                }
+                for a in (data.get("articles") or [])[:8]
+            ],
+        }
+    if name == "market_data":
+        return {
+            k: data.get(k)
+            for k in (
+                "ticker",
+                "company_name",
+                "sector",
+                "sector_etf",
+                "price",
+                "daily_change_pct",
+                "volume",
+                "market_cap",
+                "pe_ratio",
+                "fifty_two_week_high",
+                "fifty_two_week_low",
+                "last_two_quarterly_revenues",
+                "delisted",
+            )
+        }
+    if name == "correlation":
+        return {
+            k: data.get(k)
+            for k in (
+                "vs_sp500",
+                "vs_sector_etf",
+                "sector_etf_symbol",
+                "vs_peers",
+                "window_days",
+            )
+        }
+    if name == "edgar_filings":
+        return {"filings": (data.get("filings") or [])[:5]}
+    if name == "peer_fundamentals":
+        return {"peers": (data.get("peers") or [])[:5]}
+    return data
 
 
 def _default_peers(ticker: str) -> list[str]:
@@ -79,10 +144,10 @@ async def run(state: AgentState, tools_by_name: dict[str, Tool], budget: JobBudg
             args = _build_args(name, state)
             await emit(job_id, "tool_start", {"tool": name, "input": args})
 
-            # news_sentiment's _run() accepts an optional `budget` kwarg used
-            # internally for per-article sentiment classification.
+            # news_sentiment + peer_news's _run() accept an optional budget
+            # kwarg used for per-article sentiment classification.
             call_kwargs = dict(args)
-            if name == "news_sentiment":
+            if name in ("news_sentiment", "peer_news"):
                 call_kwargs["parent_budget"] = budget
             result: ToolResult = await tool.invoke(budget=budget, **call_kwargs)
 
@@ -95,6 +160,10 @@ async def run(state: AgentState, tools_by_name: dict[str, Tool], budget: JobBudg
                     "latency_ms": result.latency_ms,
                     "status": result.status,
                     "error": result.error,
+                    # Surface the structured result so the live UI can fill
+                    # in market / correlation / sentiment cards as each tool
+                    # completes (rather than all-at-once on `done`).
+                    "data": _trim_for_stream(name, result.data) if result.ok else None,
                 },
             )
 
@@ -130,7 +199,7 @@ async def run(state: AgentState, tools_by_name: dict[str, Tool], budget: JobBudg
                     degraded = True
                     degradation_reason = degradation_reason or "DELISTED"
                 # Capture citation URLs from news
-                if name == "news_sentiment":
+                if name in ("news_sentiment", "peer_news"):
                     for a in result.data.get("articles", []):
                         url = a.get("url")
                         if url and url not in citation_urls:
