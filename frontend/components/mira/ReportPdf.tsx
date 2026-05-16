@@ -11,6 +11,7 @@
 
 import {
   Document,
+  Link,
   Page,
   StyleSheet,
   Text,
@@ -344,9 +345,9 @@ function ReportPdfDocument({ report, jobId }: { report: Report; jobId: string })
 
         <Text style={styles.sectionTitle}>IV — Citations</Text>
         {report.citation_sources.map((url, i) => (
-          <Text key={i} style={styles.citation} src={url}>
+          <Link key={i} src={url} style={styles.citation}>
             [{String(i + 1).padStart(2, "0")}] {url}
-          </Text>
+          </Link>
         ))}
 
         <View style={styles.footer} fixed>
