@@ -94,7 +94,7 @@ async def run(state: AgentState) -> AgentState:
             fired_now.append(name)
 
     new_passes = state.get("reflection_passes", 0) + (1 if fired_now else 0)
-    needs_replan = bool(fired_now) and new_passes <= settings.max_reflection_passes
+    needs_replan = bool(fired_now) and new_passes < settings.max_reflection_passes
 
     if needs_replan:
         await emit(job_id, "replan", {"triggers_fired": fired_now, "pass": new_passes})

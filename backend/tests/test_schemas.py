@@ -11,6 +11,7 @@ from app.api.schemas import (
     CorrelationAnalysis,
     DataFreshness,
     MarketSnapshot,
+    MonitorStartRequest,
     SentimentDistribution,
     TokenUsage,
 )
@@ -93,6 +94,39 @@ def test_proactive_alert_tag_and_monitor_trigger_propagate():
 def test_monitor_trigger_rejects_unknown_values():
     with pytest.raises(ValidationError):
         _minimal_report(monitor_trigger="not_a_real_trigger")
+
+
+def test_correlation_analysis_allows_none_for_index_and_sector():
+    """vs_sp500 / vs_sector_etf can be None when there isn't enough
+    overlapping return history. A 0.0 default would be indistinguishable
+    from a real low correlation and would mask the reflection trigger's
+    "skip" branch."""
+    c = CorrelationAnalysis(
+        vs_sp500=None,
+        vs_sector_etf=None,
+        sector_etf_symbol="SPY",
+        vs_peers={},
+        window_days=0,
+    )
+    dumped = c.model_dump(mode="json")
+    assert dumped["vs_sp500"] is None
+    assert dumped["vs_sector_etf"] is None
+    roundtrip = CorrelationAnalysis.model_validate(dumped)
+    assert roundtrip.vs_sp500 is None
+    assert roundtrip.vs_sector_etf is None
+
+
+def test_monitor_start_request_cadence_floor():
+    """1 h floor — below that, the monitor would hammer yfinance + NewsAPI
+    past their free-tier limits and the brief frames monitoring as a
+    background cadence, not realtime."""
+    with pytest.raises(ValidationError):
+        MonitorStartRequest(ticker="AAPL", cadence_seconds=60)
+    with pytest.raises(ValidationError):
+        MonitorStartRequest(ticker="AAPL", cadence_seconds=3599)
+    # Exactly 3600 (1 h) is the floor and must pass.
+    ok = MonitorStartRequest(ticker="AAPL", cadence_seconds=3600)
+    assert ok.cadence_seconds == 3600
 
 
 def test_article_sentiment_allows_optional_metadata():
