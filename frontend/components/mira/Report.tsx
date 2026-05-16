@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import Sparkline from "./Sparkline";
 
 interface Article {
@@ -37,8 +37,8 @@ export interface Report {
     last_two_quarterly_revenues: { quarter: string; revenue_usd: number; reported_at: string }[];
   };
   correlation_analysis: {
-    vs_sp500: number;
-    vs_sector_etf: number;
+    vs_sp500: number | null;
+    vs_sector_etf: number | null;
     sector_etf_symbol: string;
     vs_peers: Record<string, number>;
     window_days: number;
@@ -74,6 +74,13 @@ export interface Report {
   tools_used: string[];
   alert_tag?: string | null;
   monitor_trigger?: string | null;
+  extended_analysis?: {
+    bull_case?: string | null;
+    bear_case?: string | null;
+    catalysts?: string[];
+    risks?: string[];
+    valuation_context?: string | null;
+  } | null;
 }
 
 function fmtUsd(v: number) {
@@ -221,19 +228,101 @@ function DegradedView({ report, jobId }: { report: Report; jobId: string }) {
   );
 }
 
-function CorrRow({ label, tag, value }: { label: string; tag: string; value: number }) {
-  const pct = Math.max(0, Math.min(1, value)) * 100;
+function interpretCorr(v: number | null | undefined, kind: "index" | "peer" = "index"): string {
+  if (v == null || Number.isNaN(v)) return "no overlap window";
+  if (v <= -0.3) return kind === "peer" ? "Inversely tied to this peer" : "Inversely correlated";
+  if (v < 0.3) return kind === "peer" ? "Trades independently of this peer" : "Moves on its own";
+  if (v < 0.7) return kind === "peer" ? "Loose link to this peer" : "Mixed sector / idiosyncratic";
+  if (v < 0.95) return kind === "peer" ? "Strong tie to this peer" : "Strong sector tie";
+  return "Moves with the sector; idiosyncratic signal limited";
+}
+
+function CorrRow({
+  label,
+  tag,
+  value,
+  kind = "index",
+}: {
+  label: string;
+  tag: string;
+  value: number | null;
+  kind?: "index" | "peer";
+}) {
+  const safe = value == null || Number.isNaN(value) ? 0 : value;
+  const pct = Math.max(0, Math.min(1, safe)) * 100;
   return (
     <div className="corr-row">
       <div className="corr-label">
         {label}
         <span className="corr-tag">{tag}</span>
+        <div
+          className="corr-caption"
+          style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}
+        >
+          {interpretCorr(value, kind)}
+        </div>
       </div>
       <div className="corr-track">
         <div className="corr-fill" style={{ width: pct + "%" }} />
         <div className="corr-threshold" style={{ left: "95%" }} title="0.95 trigger" />
       </div>
-      <div className="corr-value">{value.toFixed(2)}</div>
+      <div className="corr-value">{value == null ? "—" : value.toFixed(2)}</div>
+    </div>
+  );
+}
+
+function RevenueBars({
+  rows,
+}: {
+  rows: { quarter: string; revenue_usd: number; reported_at: string }[];
+}) {
+  if (!rows.length) return null;
+  const max = Math.max(...rows.map((r) => Math.max(r.revenue_usd, 0)), 1);
+  const qoq =
+    rows.length >= 2 && rows[1].revenue_usd > 0
+      ? ((rows[0].revenue_usd - rows[1].revenue_usd) / rows[1].revenue_usd) * 100
+      : null;
+  return (
+    <div className="rev-bars" style={{ marginTop: 14 }}>
+      <div className="eyebrow" style={{ marginBottom: 8, display: "flex", justifyContent: "space-between" }}>
+        <span>Quarterly revenue</span>
+        {qoq != null && (
+          <span className={qoq >= 0 ? "up" : "down"} style={{ fontWeight: 500 }}>
+            QoQ {fmtPct(qoq)}
+          </span>
+        )}
+      </div>
+      {rows.map((r) => {
+        const rev = Math.max(r.revenue_usd, 0);
+        const width = (rev / max) * 100;
+        return (
+          <div key={r.quarter} style={{ marginBottom: 6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 2 }}>
+              <span className="mono" style={{ color: "var(--muted)" }}>{r.quarter}</span>
+              <span className="mono tabular">
+                {rev > 0 ? "$" + fmtBig(rev) : "n/a"}
+              </span>
+            </div>
+            <div
+              style={{
+                height: 6,
+                background: "rgba(127,127,127,0.12)",
+                borderRadius: 3,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  width: width + "%",
+                  height: "100%",
+                  background: "var(--fg)",
+                  opacity: 0.7,
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -259,7 +348,6 @@ function exportFilename(ticker: string, ext: "json" | "pdf"): string {
 
 export default function ReportView({ report, jobId }: { report: Report; jobId: string }) {
   const m = report.market_snapshot;
-  const reportRef = useRef<HTMLElement | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
 
   function handleJsonExport() {
@@ -271,23 +359,13 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
   }
 
   async function handlePdfExport() {
-    if (!reportRef.current || pdfBusy) return;
+    if (pdfBusy) return;
     setPdfBusy(true);
     try {
-      // html2pdf.js accesses window at module load so it has to be dynamic-
-      // imported on the client. Default export is the factory function.
-      const mod = await import("html2pdf.js");
-      const html2pdf = (mod as any).default || mod;
-      await html2pdf()
-        .set({
-          margin: [10, 12, 10, 12],
-          filename: exportFilename(report.company_ticker, "pdf"),
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          pagebreak: { mode: ["avoid-all", "css", "legacy"] },
-        })
-        .from(reportRef.current)
-        .save();
+      // @react-pdf/renderer is heavy and pulls in fontkit/pako — dynamic-
+      // import keeps it out of the main bundle until the user clicks Export.
+      const { exportReportPdf } = await import("./ReportPdf");
+      await exportReportPdf(report, jobId, exportFilename(report.company_ticker, "pdf"));
     } finally {
       setPdfBusy(false);
     }
@@ -327,7 +405,7 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
   }
 
   return (
-    <main className="container" ref={reportRef}>
+    <main className="container">
       <section>
         <div className="h-row">
           <span className="badge">{report.company_ticker} · NASDAQ</span>
@@ -403,6 +481,7 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
             <span>MCAP · ${fmtBig(m.market_cap)}</span>
             <span>P/E · {m.pe_ratio != null ? m.pe_ratio.toFixed(1) : "—"}</span>
           </div>
+          <RevenueBars rows={m.last_two_quarterly_revenues || []} />
         </div>
 
         <div className="stat-grid">
@@ -441,8 +520,86 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
               <h2>The bottom line.</h2>
               <p>A condensation of everything MIRA saw across the tools it called this pass.</p>
             </header>
-            <p className="lead">{report.analysis_summary}</p>
+            {(report.analysis_summary || "")
+              .split(/\n\n+/)
+              .map((p) => p.trim())
+              .filter(Boolean)
+              .map((para, i) => (
+                <p key={i} className="lead" style={i > 0 ? { marginTop: 14 } : undefined}>
+                  {para}
+                </p>
+              ))}
           </section>
+
+          {(() => {
+            const ea = report.extended_analysis;
+            if (!ea) return null;
+            const hasAny =
+              ea.bull_case ||
+              ea.bear_case ||
+              (ea.catalysts && ea.catalysts.length) ||
+              (ea.risks && ea.risks.length) ||
+              ea.valuation_context;
+            if (!hasAny) return null;
+            return (
+              <section className="section">
+                <header className="section-head">
+                  <span className="num">§ I.5 — Outlook</span>
+                  <h2>Bull vs bear.</h2>
+                  <p>
+                    The analyst-style read of the same tool results: two grounded narratives,
+                    near-term catalysts, downside risks, and a valuation framing.
+                  </p>
+                </header>
+                <div className="outlook-grid">
+                  {ea.bull_case && (
+                    <div className="card outlook-side bull">
+                      <div className="eyebrow">Bull case</div>
+                      <p className="lead" style={{ marginTop: 6 }}>{ea.bull_case}</p>
+                    </div>
+                  )}
+                  {ea.bear_case && (
+                    <div className="card outlook-side bear">
+                      <div className="eyebrow">Bear case</div>
+                      <p className="lead" style={{ marginTop: 6 }}>{ea.bear_case}</p>
+                    </div>
+                  )}
+                </div>
+                {((ea.catalysts && ea.catalysts.length) || (ea.risks && ea.risks.length)) && (
+                  <div className="outlook-chips">
+                    {ea.catalysts && ea.catalysts.length > 0 && (
+                      <div className="card chip-row">
+                        <div className="eyebrow" style={{ marginBottom: 8 }}>Catalysts</div>
+                        <div className="chips">
+                          {ea.catalysts.map((c, i) => (
+                            <span className="chip pos" key={i}>{c}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {ea.risks && ea.risks.length > 0 && (
+                      <div className="card chip-row">
+                        <div className="eyebrow" style={{ marginBottom: 8 }}>Risks</div>
+                        <div className="chips">
+                          {ea.risks.map((r, i) => (
+                            <span className="chip neg" key={i}>{r}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {ea.valuation_context && (
+                  <p
+                    className="mono"
+                    style={{ color: "var(--muted)", marginTop: 12, fontSize: 12 }}
+                  >
+                    Valuation · {ea.valuation_context}
+                  </p>
+                )}
+              </section>
+            );
+          })()}
 
           <section className="section">
             <header className="section-head">
@@ -527,7 +684,7 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
               <CorrRow label="S&P 500" tag="SPY" value={c.vs_sp500} />
               <CorrRow label="Sector ETF" tag={c.sector_etf_symbol} value={c.vs_sector_etf} />
               {Object.entries(c.vs_peers).map(([p, v]) => (
-                <CorrRow key={p} label={p} tag={p} value={v} />
+                <CorrRow key={p} label={p} tag={p} value={v} kind="peer" />
               ))}
             </div>
           </section>

@@ -171,9 +171,12 @@ class MonitorRepo:
         target = await self.get_by_ticker(ticker)
         if not target:
             return []
+        # Return BOTH alert runs and the cold-start baseline run created by
+        # `monitor_start`. Filtering to PROACTIVE_ALERT only meant the monitor
+        # row showed nothing until the first trigger fired (could be hours).
         result = await self.session.execute(
             select(Job)
-            .where(Job.monitor_target_id == target.id, Job.alert_tag == "PROACTIVE_ALERT")
+            .where(Job.monitor_target_id == target.id)
             .order_by(Job.created_at.desc())
             .limit(limit)
         )

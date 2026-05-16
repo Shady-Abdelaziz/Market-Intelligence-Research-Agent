@@ -6,6 +6,7 @@ import {
   listMonitors,
   monitorHistory,
   postMonitorStart,
+  resolveTickers,
 } from "@/lib/api";
 
 // statusOf only flags "alert" for fires within this window so the row
@@ -36,6 +37,7 @@ interface TriggerSnapshot {
 interface HistoryEntry {
   job_id: string;
   created_at: string;
+  status?: string;
   triggers_fired?: string[];
   alert_tag?: string | null;
   monitor_trigger_snapshot?: TriggerSnapshot | null;
@@ -85,6 +87,7 @@ export default function MonitorsView() {
   const [form, setForm] = useState({ ticker: "", peers: "", cadence: "86400" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function refresh() {
     try {
@@ -115,16 +118,57 @@ export default function MonitorsView() {
 
   async function add() {
     setErr(null);
+    setNotice(null);
     if (!form.ticker.trim()) {
       setErr("Ticker required");
       return;
     }
     setBusy(true);
     try {
+      const peerInputs = form.peers
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const inputs = [form.ticker.trim(), ...peerInputs];
+
+      const resolved = await resolveTickers(inputs);
+      const tickerRes = resolved[0];
+      const peerRes = resolved.slice(1);
+
+      if (!tickerRes || tickerRes.status === "invalid" || !tickerRes.ticker) {
+        setErr(
+          tickerRes?.message ||
+            `"${form.ticker}" doesn't match any US-listed public company.`,
+        );
+        return;
+      }
+
+      const invalidPeers = peerRes.filter(
+        (p) => p.status === "invalid" || !p.ticker,
+      );
+      if (invalidPeers.length) {
+        setErr(
+          `Invalid peer${invalidPeers.length > 1 ? "s" : ""}: ${invalidPeers
+            .map((p) => `"${p.input}"`)
+            .join(", ")} — not a US-listed public company.`,
+        );
+        return;
+      }
+
+      const corrections = resolved.filter((r) => r.status === "corrected");
+      if (corrections.length) {
+        setNotice(
+          "Corrected: " +
+            corrections
+              .map((c) => `${c.input} → ${c.ticker} (${c.company_name})`)
+              .join("; "),
+        );
+      }
+
       await postMonitorStart(
-        form.ticker.toUpperCase(),
+        tickerRes.ticker,
         parseInt(form.cadence) || 86400,
-        form.peers.split(",").map((s) => s.trim()).filter(Boolean),
+        peerRes.map((p) => p.ticker as string),
       );
       setForm({ ticker: "", peers: "", cadence: form.cadence });
       await refresh();
@@ -255,6 +299,10 @@ export default function MonitorsView() {
                           <span className={"pct " + (pct >= 0 ? "up" : "down")}>{fmtPct(pct)}</span>
                         )}
                       </>
+                    ) : newest && (newest.status === "queued" || newest.status === "running") ? (
+                      <span className="mono" style={{ color: "var(--muted)", fontSize: 12 }}>
+                        analysis running…
+                      </span>
                     ) : (
                       <span className="mono" style={{ color: "var(--muted)", fontSize: 12 }}>
                         awaiting first tick
@@ -340,8 +388,8 @@ export default function MonitorsView() {
             <label>Ticker</label>
             <input
               value={form.ticker}
-              onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })}
-              placeholder="AAPL"
+              onChange={(e) => setForm({ ...form, ticker: e.target.value })}
+              placeholder="AAPL or Apple"
             />
           </div>
           <div className="field">
@@ -349,7 +397,7 @@ export default function MonitorsView() {
             <input
               value={form.peers}
               onChange={(e) => setForm({ ...form, peers: e.target.value })}
-              placeholder="MSFT, GOOGL"
+              placeholder="MSFT, Google"
             />
           </div>
           <div className="field">
@@ -371,6 +419,11 @@ export default function MonitorsView() {
           Trading calendar: NYSE (server-side, configurable via{" "}
           <span className="mono">MONITOR_TRADING_CALENDAR</span>). Minimum cadence 1 hour.
         </div>
+        {notice && (
+          <div className="mono" style={{ color: "var(--muted)", marginTop: 10, fontSize: 11 }}>
+            {notice}
+          </div>
+        )}
         {err && (
           <div className="mono" style={{ color: "var(--neg)", marginTop: 10, fontSize: 11 }}>
             {err}
