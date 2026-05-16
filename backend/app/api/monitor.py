@@ -13,7 +13,7 @@ from app.monitoring.baselines import compute_baselines
 from app.observability.logging import get_logger
 from app.observability.ratelimit import limiter
 from app.persistence.db import get_session
-from app.persistence.repos import MonitorRepo
+from app.persistence.repos import JobRepo, MonitorRepo
 
 router = APIRouter(tags=["monitor"])
 log = get_logger(__name__)
@@ -67,23 +67,56 @@ async def monitor_start(request: Request, req: MonitorStartRequest) -> dict[str,
         target_id = str(target.id)
         cadence = target.cadence_seconds
 
+        # Create a baseline analysis job tied to this monitor so the UI
+        # row has content from second zero instead of waiting for the
+        # first scheduled tick (1h+ later). alert_tag stays None — this
+        # is a normal report, not a PROACTIVE_ALERT.
+        from sqlalchemy import update
+
+        from app.persistence.models import Job
+
+        baseline_job = await JobRepo(session).create(
+            query=f"Baseline analysis for {ticker} (monitor cold-start)",
+            ticker=ticker,
+        )
+        await session.execute(
+            update(Job)
+            .where(Job.id == baseline_job.id)
+            .values(monitor_target_id=target.id)
+        )
+        initial_job_id = str(baseline_job.id)
+
     # Schedule the first tick on the worker. Each tick self-enqueues the
     # next one (see workers.jobs._reschedule_monitor_tick), so this is the
     # only place we kick off the chain.
     pool = request.app.state.arq_pool
     if pool is not None:
+        # Baseline analysis runs immediately so the monitor row populates.
+        await pool.enqueue_job(
+            "analyze_ticker", initial_job_id, _queue_name="mira_jobs"
+        )
+        # Scheduled monitoring tick chain.
         await pool.enqueue_job(
             "monitor_tick",
             target_id,
             _queue_name="mira_jobs",
             _defer_by=timedelta(seconds=cadence),
         )
+    else:
+        # Standalone fallback — mirror analyze.py's behaviour so single-
+        # container deploys still produce a baseline report.
+        import asyncio
+
+        from app.workers.jobs import analyze_ticker
+
+        asyncio.create_task(analyze_ticker({}, initial_job_id))
 
     return {
         "id": target_id,
         "ticker": ticker,
         "cadence_seconds": cadence,
         "active": True,
+        "initial_job_id": initial_job_id,
         "next_run_at": (datetime.now(UTC) + timedelta(seconds=cadence)).isoformat(),
     }
 

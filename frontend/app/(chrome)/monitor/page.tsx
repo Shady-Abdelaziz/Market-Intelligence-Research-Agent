@@ -37,6 +37,7 @@ interface TriggerSnapshot {
 interface HistoryEntry {
   job_id: string;
   created_at: string;
+  status?: string;
   triggers_fired?: string[];
   alert_tag?: string | null;
   monitor_trigger_snapshot?: TriggerSnapshot | null;
@@ -298,6 +299,10 @@ export default function MonitorsView() {
                           <span className={"pct " + (pct >= 0 ? "up" : "down")}>{fmtPct(pct)}</span>
                         )}
                       </>
+                    ) : newest && (newest.status === "queued" || newest.status === "running") ? (
+                      <span className="mono" style={{ color: "var(--muted)", fontSize: 12 }}>
+                        analysis running…
+                      </span>
                     ) : (
                       <span className="mono" style={{ color: "var(--muted)", fontSize: 12 }}>
                         awaiting first tick
