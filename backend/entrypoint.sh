@@ -8,7 +8,7 @@ if [[ "${DATABASE_URL:-}" == postgresql* ]]; then
   python - <<'PY'
 import os, time, sys
 from sqlalchemy import create_engine, text
-url = os.environ["DATABASE_URL"].replace("+asyncpg", "")
+url = os.environ["DATABASE_URL"].replace("+asyncpg", "+psycopg")
 for i in range(30):
     try:
         create_engine(url).connect().execute(text("SELECT 1"))

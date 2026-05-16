@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
-from app.agent.events import subscribe, unsubscribe
+from app.agent.events import subscribe, subscribe_redis, unsubscribe
+from app.config import get_settings
 from app.persistence.db import get_session
 from app.persistence.repos import EventRepo, JobRepo
 
@@ -75,22 +77,49 @@ async def stream_status(job_id: str, request: Request) -> EventSourceResponse:
             if j and j.status in ("completed", "failed"):
                 return
 
-        q = subscribe(job_id)
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    msg = await asyncio.wait_for(q.get(), timeout=15.0)
-                except TimeoutError:
-                    # Heartbeat keepalive
-                    yield {"event": "ping", "data": "{}"}
-                    continue
-                yield {"event": msg["event"], "data": json.dumps(msg["data"], default=str)}
-                if msg["event"] in ("done", "error"):
-                    break
-        finally:
-            unsubscribe(job_id, q)
+        if get_settings().redis_enabled:
+            # Cross-process: consume from Redis pub/sub
+            agen = subscribe_redis(job_id).__aiter__()
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        msg = await asyncio.wait_for(agen.__anext__(), timeout=15.0)
+                    except TimeoutError:
+                        yield {"event": "ping", "data": "{}"}
+                        continue
+                    except StopAsyncIteration:
+                        break
+                    yield {
+                        "event": msg["event"],
+                        "data": json.dumps(msg["data"], default=str),
+                    }
+                    if msg["event"] in ("done", "error"):
+                        break
+            finally:
+                with contextlib.suppress(Exception):
+                    await agen.aclose()
+        else:
+            # Single-process fallback
+            q = subscribe(job_id)
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        msg = await asyncio.wait_for(q.get(), timeout=15.0)
+                    except TimeoutError:
+                        yield {"event": "ping", "data": "{}"}
+                        continue
+                    yield {
+                        "event": msg["event"],
+                        "data": json.dumps(msg["data"], default=str),
+                    }
+                    if msg["event"] in ("done", "error"):
+                        break
+            finally:
+                unsubscribe(job_id, q)
 
     return EventSourceResponse(
         event_gen(),

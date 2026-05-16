@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"C:/Users/Shady/Desktop/market analysis/Market-Intelligence-Research-Agent\" && sed -i 's/\\\\r$//' backend/entrypoint.sh && file backend/entrypoint.sh)",
+      "Bash(docker compose *)"
+    ]
+  }
+}
