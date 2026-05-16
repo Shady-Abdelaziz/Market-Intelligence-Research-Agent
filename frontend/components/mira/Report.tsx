@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import Sparkline from "./Sparkline";
 
 interface Article {
@@ -348,7 +348,6 @@ function exportFilename(ticker: string, ext: "json" | "pdf"): string {
 
 export default function ReportView({ report, jobId }: { report: Report; jobId: string }) {
   const m = report.market_snapshot;
-  const reportRef = useRef<HTMLElement | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
 
   function handleJsonExport() {
@@ -360,23 +359,13 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
   }
 
   async function handlePdfExport() {
-    if (!reportRef.current || pdfBusy) return;
+    if (pdfBusy) return;
     setPdfBusy(true);
     try {
-      // html2pdf.js accesses window at module load so it has to be dynamic-
-      // imported on the client. Default export is the factory function.
-      const mod = await import("html2pdf.js");
-      const html2pdf = (mod as any).default || mod;
-      await html2pdf()
-        .set({
-          margin: [10, 12, 10, 12],
-          filename: exportFilename(report.company_ticker, "pdf"),
-          html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
-          jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-          pagebreak: { mode: ["avoid-all", "css", "legacy"] },
-        })
-        .from(reportRef.current)
-        .save();
+      // @react-pdf/renderer is heavy and pulls in fontkit/pako — dynamic-
+      // import keeps it out of the main bundle until the user clicks Export.
+      const { exportReportPdf } = await import("./ReportPdf");
+      await exportReportPdf(report, jobId, exportFilename(report.company_ticker, "pdf"));
     } finally {
       setPdfBusy(false);
     }
@@ -416,7 +405,7 @@ export default function ReportView({ report, jobId }: { report: Report; jobId: s
   }
 
   return (
-    <main className="container" ref={reportRef}>
+    <main className="container">
       <section>
         <div className="h-row">
           <span className="badge">{report.company_ticker} · NASDAQ</span>
