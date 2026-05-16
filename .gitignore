@@ -27,6 +27,11 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 
+# Playwright
+frontend/playwright-report/
+frontend/test-results/
+frontend/.playwright/
+
 # Local data
 *.db
 *.db-journal

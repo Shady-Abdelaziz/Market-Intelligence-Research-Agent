@@ -284,6 +284,22 @@ make lint     # ruff
 make typecheck # mypy
 ```
 
+### End-to-end browser tests (Playwright)
+
+```bash
+cd frontend
+npm install
+npm run e2e:install   # downloads Chromium (once)
+npm run e2e
+```
+
+The Playwright suite (`frontend/e2e/`) drives the real backend (LLM + yfinance + NewsAPI), so `docker compose up` must be running before invoking it. Two specs:
+
+- `analyze.spec.ts` — submits an AAPL analysis, waits for completion, asserts the report page renders multi-paragraph summary, correlation captions, exactly three key findings, and (when present) the Outlook card.
+- `monitor.spec.ts` — calls `POST /monitor_start`, waits for the baseline analysis to complete, verifies the monitor row shows a real price (not "awaiting first tick"), and clicks through "view" to confirm Report.tsx mounts at `/jobs/[id]`.
+
+Set `PLAYWRIGHT_SKIP_E2E=1` to skip both specs in CI environments without a live stack.
+
 ---
 
 ## Evaluation strategy (how to measure agent quality at scale)
@@ -315,6 +331,7 @@ Production-grade evaluation of an autonomous agent like M.I.R.A. needs **multipl
 - **30-day baselines for monitoring are recomputed in-process** each tick. For a high-volume monitor fleet a feature store (precomputed nightly) would be more efficient and consistent.
 - **Sector ETF mapping** is a static dict in `app/tools/market_data.py`. A real system would derive it from a sector taxonomy service. Unknown sectors fall back to SPY (broad-market correlation).
 - **LLM-as-judge uses the same provider family as the agent.** For true rigor the judge should use a different model family — see the evaluation strategy above for the discussion.
+- **Cold-start baseline cost on `monitor_start`.** Each `POST /monitor_start` now triggers an immediate analysis run so the monitor row populates without waiting for the first cron tick. That adds roughly one analysis worth of LLM + news cost (≈ $0.03 – $0.10 at the configured model) per monitor registration. The trade-off is intentional — empty monitor rows are a far worse UX than the marginal spend.
 - **arq cron scheduling** is implemented by self-enqueuing the next tick inside a `try/finally` (`backend/app/workers/jobs.py::_reschedule_monitor_tick`). The chain survives the trading-day gate, baseline failures, and worker restarts (arq persists deferred jobs to Redis). The two failure modes that still slip the schedule: (a) if the worker is down when a tick is due, the deferred job sits in the queue until the next worker start — slipping by the outage duration, not running missed ticks back-to-back; (b) `MonitoringTarget.active=False` (via `DELETE /monitor/{ticker}`) intentionally halts the chain. For strict SLAs a separate scheduler (Celery Beat, k8s CronJob) would be preferable. See `docs/monitoring.md` for the operator-facing walkthrough.
 - **SSE reconnection** uses an in-process subscriber queue. If the user reconnects to a different API replica behind a load balancer, the queue is empty and only the persisted backlog (from Postgres `agent_events`) is replayed. For multi-replica live streaming, Redis pub/sub would be a better backplane.
 - **`peer_fundamentals` mock returns seeded-stable but not real data.** Don't trust the numbers — it's there because the brief literally says "mock".
